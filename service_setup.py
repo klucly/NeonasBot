@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 import logging
 import json
+from enum import Enum, auto
+
+class GlobalEvents(Enum):
+    Exit = auto()
 
 
 @dataclass

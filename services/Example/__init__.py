@@ -31,13 +31,17 @@ class ExampleService:
     async def run(self):
         self.setup_data.logger.info("Example service: Starting")
 
-        async with self.app:
+        try:
             await self.bot_setup()
 
             while True:
                 await self.mainloop()
+        finally:
+            await self.app.updater.stop()
+            await self.app.stop()
 
     async def bot_setup(self):
+        await self.app.initialize()
         await self.app.start()
 
         await self.app.bot.set_my_commands([
@@ -57,22 +61,24 @@ class ExampleService:
 
     async def mainloop(self):
         ...
-        await asyncio.sleep(10)
+        await asyncio.sleep(2)
 
     class Commands:
+        @staticmethod
         async def start(wrapper: CommandDataWrapper, update: telegram.Update, context: telegram.ext.CallbackContext):
             logger = wrapper.setup_data.logger
             chat_id = update.message.chat_id
 
-            if chat_id not in wrapper.active_chats:
+            if chat_id in wrapper.active_chats:
+                await update.message.reply_text("I know you")
+            else:
                 wrapper.active_chats.append(chat_id)
                 save_chats(wrapper.active_chats)
                 logger.info(f"Example service: {chat_id} joined")
 
                 await update.message.reply_text("New here")
-            else:
-                await update.message.reply_text("I know you")
 
+        @staticmethod
         async def huh(wrapper: CommandDataWrapper, update: telegram.Update, context: telegram.ext.CallbackContext):
             logger = wrapper.setup_data.logger
 

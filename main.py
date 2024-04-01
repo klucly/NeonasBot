@@ -4,7 +4,6 @@ import logging
 
 from service_setup import SetupServiceData
 from services.Example import ExampleService
-from services.Scheduler import SchedulerService
 
 
 def setup_logger() -> logging.Logger:
@@ -33,28 +32,23 @@ class Main:
         self.setup_data = self.create_setup_data()
 
     def create_setup_data(self) -> SetupServiceData:
-        return SetupServiceData(logger=self.logger, shared=dict())
+        return SetupServiceData(logger=self.logger, shared={})
     
     def run(self):
-        asyncio.run(self.async_run())
+        try:
+            asyncio.run(self.async_run())
+        except Exception as e:
+            self.logger.exception(e)
+        finally:
+            self.logger.info("Boot: Exiting...")
 
     async def async_run(self):
         self.logger.info("Boot: Setting up services")
-        example_service = ExampleService(setup_data=self.setup_data)
-        scheduler_service = SchedulerService(setup_data=self.setup_data)
+        example_service = ExampleService(self.setup_data)
 
-        try:
-            self.logger.info("Boot: Running services")
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(example_service.run())
-                tg.create_task(scheduler_service.run())
-
-        except Exception as e:
-            self.logger.exception(e)
-            raise e
-        
-        finally:
-            self.logger.info("Boot: Exiting...")
+        self.logger.info("Boot: Running services")
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(example_service.run())
 
 if __name__ == "__main__":
     main = Main()
