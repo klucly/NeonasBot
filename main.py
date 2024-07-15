@@ -4,6 +4,7 @@ import logging
 
 from service_setup import SetupServiceData
 from services.Example import ExampleService
+from services.StudentBot import StudentBotService
 
 
 def setup_logger() -> logging.Logger:
@@ -44,11 +45,13 @@ class Main:
 
     async def async_run(self):
         self.logger.info("Boot: Setting up services")
-        example_service = ExampleService(self.setup_data)
+        # example_service = ExampleService(self.setup_data)
+        student_bot_service = StudentBotService(self.setup_data)
 
         self.logger.info("Boot: Running services")
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(example_service.run())
+            # tg.create_task(example_service.run())
+            tg.create_task(student_bot_service.run())
 
 if __name__ == "__main__":
     main = Main()
