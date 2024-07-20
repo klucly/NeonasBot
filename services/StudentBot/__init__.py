@@ -278,21 +278,21 @@ class Button:
     @staticmethod
     async def group_31(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        service.clients[query.from_user.id].group = "km-31"
+        service.clients[query.from_user.id].group = "km31"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
 
     @staticmethod
     async def group_32(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        service.clients[query.from_user.id].group = "km-32"
+        service.clients[query.from_user.id].group = "km32"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
 
     @staticmethod
     async def group_33(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        service.clients[query.from_user.id].group = "km-33"
+        service.clients[query.from_user.id].group = "km33"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
 
