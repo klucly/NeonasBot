@@ -25,7 +25,7 @@ schedule_friday = re.findall(r"\bП.ятниця.*?(?=\bСубота\:|#)",clean
 schedule_saturday = re.findall(r"\bСубота.*?(?=\bНеділя|#)",cleaned_content)
 schedule_sunday = re.findall(r"\bНеділя.*?(?=#)",cleaned_content)
 
-schdedule_pattern = re.compile(r"(?P<class>[0-9]\.)\s+?(?P<time>\([1-2]?[0-9]\:[0-5][0-9]\))(?P<subj>((?!\()\s+\b\w+\b(?!\))){1,}?)\s+?(?P<type>\(\w+\))\s+?(?P<link>\(https://\w+\S+\))")
+schdedule_pattern = re.compile(r"(?P<class>[0-9]\.)\s*(?P<time>\([1-2]?[0-9]\:[0-5][0-9]\))(?P<subj>((?!\()\s*\b\w+\b(?!\))){1,}?)\s*(?P<type>\(\w+\))\s*(?P<link>\(https://\w+\S+\))*")
 
 schedule_parsed = []
 
