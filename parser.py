@@ -25,7 +25,8 @@ schedule_friday = re.findall(r"\bП.ятниця.*?(?=\bСубота\:|#)",clean
 schedule_saturday = re.findall(r"\bСубота.*?(?=\bНеділя|#)",cleaned_content)
 schedule_sunday = re.findall(r"\bНеділя.*?(?=#)",cleaned_content)
 
-schdedule_pattern = re.compile(r"(?P<class>[0-9]\.)\s+(?P<time>\([1-2]?[0-9]\:[0-5][0-9]\))\s+(?P<subj>\b\w+\b)\s+(?P<type>\(\w+\))\s+(?P<link>\(\w+\S+\))")
+schdedule_pattern = re.compile(r"(?P<class>[0-9]\.)\s+?(?P<time>\([1-2]?[0-9]\:[0-5][0-9]\))(?P<subj>((?!\()\s+\b\w+\b(?!\))){1,}?)\s+?(?P<type>\(\w+\))\s+?(?P<link>\(https://\w+\S+\))")
+
 schedule_parsed = []
 
 if len(schedule_monday) != 0:
@@ -81,19 +82,19 @@ for i in range(len(schedule_parsed)):
     day_content = schedule_parsed[i]
     for j in range(1,len(day_content)):
         lesson_values = day_content[j]
-        db_cursor.execute("INSERT INTO schedule2 (Day,Class,Time,Subject,Type) VALUES (%s,%s,%s,%s,%s)",(day_content[0], 
-                                                                               re.sub(r"[.]",'',lesson_values[0]),
-                                                                               re.sub(r"[()]",'',lesson_values[1]),
-                                                                               lesson_values[2],
-                                                                               re.sub(r"[()]",'',lesson_values[3])))
+        db_cursor.execute("INSERT INTO schedule2 (Day,Class,Time,Subject,Type) VALUES (%s,%s,%s,%s,%s)",(day_content[0].strip(), 
+                                                                               re.sub(r"[. ]",'',lesson_values[0]).strip(),
+                                                                               re.sub(r"[() ]",'',lesson_values[1].strip()),
+                                                                               lesson_values[2].strip(),
+                                                                               re.sub(r"[() ]",'',lesson_values[4].strip())))
 for i in range(len(schedule_parsed)):
     day_content = schedule_parsed[i]
     for j in range(1,len(day_content)):
         lesson_values = day_content[j]
         db_cursor.execute("INSERT INTO lessonlinks (Subject,Type,Link) VALUES (%s,%s,%s)",(
-                                                                               re.sub(r"[.]",'',lesson_values[2]),
-                                                                               re.sub(r"[()]",'',lesson_values[3]),
-                                                                               re.sub(r"[()]",'',lesson_values[4])))
+                                                                               re.sub(r"[.]",'',lesson_values[2].strip()),
+                                                                               re.sub(r"[()]",'',lesson_values[4].strip()),
+                                                                               re.sub(r"[()]",'',lesson_values[5].strip())))
 
 
 
