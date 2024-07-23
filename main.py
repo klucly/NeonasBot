@@ -3,7 +3,7 @@ import sys
 import logging
 
 from service_setup import SetupServiceData
-from services.Example import ExampleService
+# from services.Example import ExampleService
 from services.StudentBot import StudentBotService
 
 
