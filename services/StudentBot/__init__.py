@@ -348,10 +348,7 @@ class StudentBotService:
             message = await self.app.bot.edit_message_text(text, chat_id=usr_id, message_id=main_message_id, **kwargs)
             return message.id
         
-        except telegram.error.BadRequest as e:
-            if e.message.startswith("Message is not modified"):
-                return main_message_id
-
+        except telegram.error.BadRequest:
             return await self._reset_and_send(usr_id, text, **kwargs)
 
     async def send_raw(self, usr_id: int, text: str, **kwargs) -> int:
