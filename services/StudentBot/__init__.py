@@ -5,10 +5,21 @@ import telegram
 import asyncio
 from telegram.ext import CallbackQueryHandler, MessageHandler, CallbackContext, filters
 from telegram import InlineKeyboardButton
+import psycopg2
 
 from dataclasses import dataclass
 import yaml
 import re
+import json
+
+def load_db_config(filename='./data/Scheduler/stud_db_config.json'):
+    with open(filename, 'r') as file:
+        return json.load(file)
+
+
+def load_schedule_db(filename='./data/Scheduler/schedule_db_config.json'):
+    with open(filename, 'r') as file:
+        return json.load(file)
 
 
 async def idle() -> None:
@@ -38,10 +49,11 @@ class Client:
     _verified: bool = False
     _real_name: str | None = None
     _group: str | None = None
-    _is_inputting_name = False
+    _is_inputting_name: bool = False
     _main_message: int | None = None
-    _main_message_first = True
+    _main_message_first: bool = True
     _options: dict[str, Any] = None
+    student_db: Any = None
     
     @property
     def id(self) -> int:
@@ -53,7 +65,15 @@ class Client:
     
     @is_verified.setter
     def is_verified(self, verified: bool) -> None:
+        query = """
+        UPDATE students
+        SET verified = %s
+        WHERE id = %s
+        """
+
+        self.student_db.cursor.execute(query, (verified, self.id))
         self._verified = verified
+        self.student_db.update_db()
 
     @property
     def real_name(self) -> str | None:
@@ -61,15 +81,31 @@ class Client:
     
     @real_name.setter
     def real_name(self, real_name: str) -> None:
+        query = """
+        UPDATE students
+        SET real_name = %s
+        WHERE id = %s;  
+        """
+
+        self.student_db.cursor.execute(query, (real_name, self.id))
         self._real_name = real_name
+        self.student_db.update_db()
 
     @property
     def group(self) -> str | None:
         return self._group
     
     @group.setter
-    def group(self, group: str) -> None:
-        self._group = group
+    def group(self, group_name: str) -> None:
+        query = """
+        UPDATE students
+        SET "group" = %s
+        WHERE id = %s;
+        """
+
+        self.student_db.cursor.execute(query, (group_name, self.id))
+        self._group = group_name
+        self.student_db.update_db()
 
     @property
     def is_inputting_name(self) -> bool:
@@ -77,15 +113,33 @@ class Client:
     
     @is_inputting_name.setter
     def is_inputting_name(self, is_inputting_name: bool) -> None:
+        query = """
+        UPDATE students
+        SET is_inputting_name = %s
+        WHERE id = %s;
+        """
+
+        self.student_db.cursor.execute(query, (is_inputting_name, self.id))
         self._is_inputting_name = is_inputting_name
+
+        self.student_db.update_db()
 
     @property
     def main_message(self) -> int | None:
         return self._main_message
     
     @main_message.setter
-    def main_message(self, main_message: int) -> None:
-        self._main_message = main_message
+    def main_message(self, main_message_: int) -> None:
+        query = """
+        UPDATE students
+        SET main_message = %s
+        WHERE id = %s;
+        """
+
+        self.student_db.cursor.execute(query, (main_message_, self.id))
+        self._main_message = main_message_
+
+        self.student_db.update_db()
 
     @property
     def is_main_message_first(self) -> bool:
@@ -93,7 +147,16 @@ class Client:
     
     @is_main_message_first.setter
     def is_main_message_first(self, main_message_first: bool) -> None:
+        query = """
+        UPDATE students
+        SET main_message_first = %s
+        WHERE id = %s;
+        """
+
+        self.student_db.cursor.execute(query, (main_message_first, self.id))
         self._main_message_first = main_message_first
+
+        self.student_db.update_db()
 
     @property
     def options(self) -> dict[str, Any] | None:
@@ -136,6 +199,75 @@ class Admins:
 
 # Group: {Admin_id: {User_for_verification_id: admin_verification_message_id}}
 ADMIN_VERIFIED_MESSAGES = dict[str, dict[int, dict[int, int]]]
+
+
+class StudentDB:
+    def __init__(self):
+        self.connection = psycopg2.connect(**load_db_config())
+        self.cursor = self.connection.cursor()
+
+    def add_student(self, id: int) -> Client:
+
+        query = """
+        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first)
+        VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING
+        """
+
+        self.cursor.execute(query, (id, False, None, None, False, None, True))
+        self.connection.commit()
+
+        student = Client(id, student_db=self)
+
+        return student
+
+    def update_student_verification(self, id: int, verified: bool) -> None:
+
+        query = """
+        UPDATE students 
+        SET verified = %s
+        WHERE id = %s
+        """
+
+        self.cursor.execute(query, (verified, id))
+        self.connection.commit()
+
+    def get_student(self, id: int) -> Client | None:
+        """Return tuple with information about student:
+        (id, verified, real_name, group, is_inputting_name, main_message)"""
+
+        query = """
+        SELECT * FROM students
+        WHERE id = %s
+        """
+
+        self.cursor.execute(query, (id,))
+        student_info = self.cursor.fetchone()
+
+        if student_info is None:
+            return None
+
+        student = Client(_id = student_info[0],
+                         _verified = student_info[1],
+                         _real_name = student_info[2],
+                         _group = student_info[3],
+                         _is_inputting_name = student_info[4],
+                         _main_message = student_info[5],
+                         _main_message_first = student_info[6],
+                         student_db = self) 
+        
+        return student
+
+    def student_exist(self, id: int) -> bool:
+        return bool(self.get_student(id))
+
+    def close(self):
+        self.cursor.close()
+        self.connection.close()
+
+    def update_db(self) -> None:
+        "We don't know how, but it works!!!"
+        self.add_student(id=0)
+
 
 class Verification:
     def __init__(self, service) -> None:
@@ -239,8 +371,77 @@ class Verification:
     
     def get_client_from_verification_message(self, message: telegram.Message):
         user_id = int(re.search(r"\[(\d+)\]", message.text).group(1))
-        client = self.service.clients[user_id]
+        client = self.service.student_db.get_student(user_id)
         return client
+
+
+class ScheduleDB:
+    def __init__(self, stud_bot):
+        self.connection = psycopg2.connect(**load_db_config())
+        self.cursor = self.connection.cursor()
+        self.stud_bot = stud_bot
+        self.student_db = self.stud_bot.student_db
+
+    def get_schedule(self, group_name: str, day: str, week: int) -> list:
+        conn = psycopg2.connect(**load_schedule_db())
+        cur = conn.cursor()
+        table_with_links = ''.join(f"{group_name}_links")
+
+        query = f"""
+            SELECT s.time, s.subject, s.class_type, l.url
+            FROM {group_name} AS s
+            JOIN {table_with_links} l ON s.link_id = l.link_id
+            WHERE s.day_of_week = %s AND s.week = %s;
+            """
+
+        try:
+            cur.execute(query, (day, week))
+            rows = cur.fetchall()
+        except Exception as e:
+            print(f"Database error: {e}")
+            rows = []
+        finally:
+            cur.close()
+            conn.close()
+
+        return rows
+
+    async def send_schedule(self, update: telegram.Update, user_id: int, context: CallbackContext, day: str) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+        week = self.get_week()
+
+        if not self.student_db.student_exist(user_id):
+            await self.stud_bot.send(user.id, "You need to register and select a group first.")
+            return
+
+        schedule = self.get_schedule(client.group, day, week)
+
+        if not schedule:
+            await self.stud_bot.send(user.id, f"No schedule found for {day}.")
+        else:
+            schedule_info = []
+            for row in schedule:
+                start_time = row[0]
+                subject = row[1]
+                class_type = row[2]
+                link = row[3]
+                schedule_info.append(
+                    f"{start_time}: {subject}, ({class_type}) [{link}]\n"
+                )
+
+            schedule_text = "\n".join(schedule_info)
+            try:
+                await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_text}")
+            except Exception as e:
+                print(f"Error sending schedule: {e}")
+    
+    def get_group_name(self, update: telegram.Update) -> str:
+        return self.clients[update.effective_user.id].group
+    
+    # TODO
+    def get_week(self):
+        return 1
 
 
 class StudentBotService:
@@ -251,17 +452,11 @@ class StudentBotService:
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
         self.verification = Verification(self)
+        self.student_db = StudentDB()
+        self.schedule_db = ScheduleDB(self)
 
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
-
-    def get_client(self, user_id: int) -> Client | None:
-        if user_id not in self.clients:
-            return None
-        return self.clients[user_id]
-
-    def add_client(self, client: Client) -> None:
-        self.clients[client.id] = client
-
+    
     async def run(self) -> None:
         try:
             await self.bot_setup()
@@ -308,7 +503,7 @@ class StudentBotService:
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
 
-        if not await self.client_exists(query.from_user.id):
+        if not self.student_db.student_exist(query.from_user.id):
             await query.answer(text="Message is broken :0\nWrite /start to fix this >_<")
             return
 
@@ -320,7 +515,7 @@ class StudentBotService:
 
     async def text_controller(self, update: telegram.Update, context: CallbackContext) -> int:
         user = update.effective_user
-        client = self.get_client(user.id)
+        client = self.student_db.get_student(user.id)
 
         if client is None or not client.is_inputting_name:
             await update.message.delete()
@@ -337,7 +532,7 @@ class StudentBotService:
     async def send(self, usr_id: int, text: str, **kwargs) -> int:
         "Returns new message's id"
         
-        client = self.get_client(usr_id)
+        client = self.student_db.get_student(usr_id)
         main_message_id = client.main_message
 
         if main_message_id is None or not client.is_main_message_first:
@@ -353,7 +548,7 @@ class StudentBotService:
 
     async def send_raw(self, usr_id: int, text: str, **kwargs) -> int:
         message = await self.app.bot.send_message(usr_id, text, **kwargs)
-        client = self.get_client(usr_id)
+        client = self.student_db.get_student(usr_id)
         client.is_main_message_first = False
         return message.id
 
@@ -361,13 +556,13 @@ class StudentBotService:
         new_message = await self.app.bot.send_message(usr_id, text, **kwargs)
 
         await self.clear_main_message(usr_id)
-        client = self.get_client(usr_id)
+        client = self.student_db.get_student(usr_id)
         client.main_message = new_message.id
 
         return new_message.id
 
     async def clear_main_message(self, usr_id: int) -> None:
-        message = self.get_client(usr_id).main_message
+        message = self.student_db.get_student(usr_id).main_message
         try:
             await self.app.bot.delete_message(usr_id, message)
         except telegram.error.BadRequest:
@@ -377,7 +572,7 @@ class StudentBotService:
         await delete_user_request_if_text(update)
 
         usr = update.effective_user
-        client = self.get_client(usr.id)
+        client = self.student_db.get_student(usr.id)
 
         if client is None:
             return
@@ -391,7 +586,7 @@ class StudentBotService:
     async def start(self, update: telegram.Update, context: CallbackContext) -> None:
         user = update.effective_user
 
-        if await self.client_exists(user.id) and self.get_client(user.id).is_verified:
+        if self.student_db.student_exist(user.id) and self.student_db.get_student(user.id).is_verified:
             await self.menu(update, context)
             return
 
@@ -406,14 +601,11 @@ class StudentBotService:
         else:
             await Menu.group_choice_menu(self, update, context)
 
-    async def client_exists(self, usr_id: int) -> bool:
-        return self.get_client(usr_id) is not None
-
     async def init_user(self, usr_id: int) -> None:
-        if await self.client_exists(usr_id):
+        if self.student_db.student_exist(usr_id):
             return
         
-        self.add_client(Client(usr_id))
+        self.student_db.add_student(usr_id)
 
     async def get_name_by_id(self, usr_id: int) -> str:
         user = await self.app.bot.get_chat_member(usr_id, usr_id)
@@ -435,7 +627,7 @@ class Menu:
     async def enter_name_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await service.send(update.effective_user.id, "Enter your full name:")
-        client = service.get_client(query.from_user.id)
+        client = service.student_db.get_student(query.from_user.id)
         client.is_inputting_name = True
         
     @staticmethod
@@ -459,13 +651,11 @@ class Menu:
     @staticmethod
     async def schedule_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Mon", callback_data="todo")],
-            [InlineKeyboardButton("Tue", callback_data="todo")],
-            [InlineKeyboardButton("Wed", callback_data="todo")],
-            [InlineKeyboardButton("Thu", callback_data="todo")],
-            [InlineKeyboardButton("Fri", callback_data="todo")],
-            [InlineKeyboardButton("Sat", callback_data="todo")],
-            [InlineKeyboardButton("Sun", callback_data="todo")],
+            [InlineKeyboardButton("Понеділок", callback_data="schedule_mon")],
+            [InlineKeyboardButton("Вівторок", callback_data="schedule_tue")],
+            [InlineKeyboardButton("Середа", callback_data="schedule_wed")],
+            [InlineKeyboardButton("Четвер", callback_data="schedule_thu")],
+            [InlineKeyboardButton("П'ятниця", callback_data="schedule_fri")]
         ])
         await service.send(update.effective_user.id, "Enter the day:", reply_markup=reply_markup)
 
@@ -475,7 +665,7 @@ class Menu:
 
     @staticmethod
     async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        user = service.get_client(update.effective_user.id)
+        user = service.student_db.get_student(update.effective_user.id)
 
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Schedule", callback_data="schedule")],
@@ -490,7 +680,7 @@ class Button:
     @staticmethod
     async def group_31(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        client = service.get_client(query.from_user.id)
+        client = service.student_db.get_student(query.from_user.id)
         client.group = "km31"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
@@ -498,7 +688,7 @@ class Button:
     @staticmethod
     async def group_32(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        client = service.get_client(query.from_user.id)
+        client = service.student_db.get_student(query.from_user.id)
         client.group = "km32"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
@@ -506,7 +696,7 @@ class Button:
     @staticmethod
     async def group_33(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
-        client = service.get_client(query.from_user.id)
+        client = service.student_db.get_student(query.from_user.id)
         client.group = "km33"
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
@@ -536,6 +726,42 @@ class Button:
         await Menu.schedule_menu(service, update, context)
 
     @staticmethod
+    async def schedule_mon(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.schedule_db.send_schedule(update, user_id, context, 'Monday')
+
+    @staticmethod
+    async def schedule_tue(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.schedule_db.send_schedule(update, user_id, context, 'Tuesday')
+
+    @staticmethod
+    async def schedule_wed(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.schedule_db.send_schedule(update, user_id, context, 'Wednesday')
+
+    @staticmethod
+    async def schedule_thu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.schedule_db.send_schedule(update, user_id, context, 'Thursday')
+
+    @staticmethod
+    async def schedule_fri(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.schedule_db.send_schedule(update, user_id, context, 'Friday')
+
+
+    @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await query.answer()
@@ -546,7 +772,7 @@ class Button:
         query = update.callback_query
         await query.answer()
         await service.send(update.effective_user.id, "Verification request sent! Please wait for confirmation ^^")
-        client = service.get_client(query.from_user.id)
+        client = service.student_db.get_student(query.from_user.id)
         await service.verification.send(client)
 
         service.logger.info(f"StudentBotService: {query.from_user.name} sent verification request")
@@ -556,7 +782,7 @@ class Button:
         query = update.callback_query
         await query.answer()
 
-        verifier = service.get_client(query.from_user.id)
+        verifier = service.student_db.get_student(query.from_user.id)
         client = service.verification.get_client_from_verification_message(query.message)
         await service.verification.verify(client, verifier)
 
@@ -565,7 +791,7 @@ class Button:
         query = update.callback_query
         await query.answer()
 
-        verifier = service.get_client(query.from_user.id)
+        verifier = service.student_db.get_student(query.from_user.id)
         client = service.verification.get_client_from_verification_message(query.message)
         await service.verification.discard(client, verifier)
 
