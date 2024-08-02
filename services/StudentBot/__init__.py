@@ -1,3 +1,4 @@
+import datetime
 from typing import Any
 from service_setup import SetupServiceData, get_token
 from telegram.ext import ApplicationBuilder, CommandHandler
@@ -12,12 +13,13 @@ import yaml
 import re
 import json
 
-def load_db_config(filename='./data/Scheduler/stud_db_config.json'):
+
+def load_db_config(filename='./data/StudentBot/stud_db_config.json') -> dict[str, str]:
     with open(filename, 'r') as file:
         return json.load(file)
 
 
-def load_schedule_db(filename='./data/Scheduler/schedule_db_config.json'):
+def load_schedule_db(filename='./data/StudentBot/schedule_db_config.json') -> dict[str, str]:
     with open(filename, 'r') as file:
         return json.load(file)
 
@@ -182,12 +184,12 @@ class Admins:
         self.save_admins()
 
     def save_admins(self) -> None:
-        with open("data/Scheduler/admins.yaml", "w") as f:
+        with open("data/StudentBot/admins.yaml", "w") as f:
             yaml.dump(self._admins, f)
     
     def load_admins(self) -> dict[str, list[int]]:
         try:
-            with open("data/Scheduler/admins.yaml", "r") as f:
+            with open("data/StudentBot/admins.yaml", "r") as f:
                 return yaml.load(f, Loader=yaml.FullLoader)
         
         except FileNotFoundError:
@@ -210,7 +212,7 @@ class StudentDB:
 
         query = """
         INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first)
-        VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
 
         self.cursor.execute(query, (id, False, None, None, False, None, True))
@@ -232,8 +234,6 @@ class StudentDB:
         self.connection.commit()
 
     def get_student(self, id: int) -> Client | None:
-        """Return tuple with information about student:
-        (id, verified, real_name, group, is_inputting_name, main_message)"""
 
         query = """
         SELECT * FROM students
@@ -265,8 +265,8 @@ class StudentDB:
         self.connection.close()
 
     def update_db(self) -> None:
-        "We don't know how, but it works!!!"
-        self.add_student(id=0)
+        self.connection.commit()
+
 
 
 class Verification:
@@ -279,7 +279,7 @@ class Verification:
         
     def load_messages(self) -> ADMIN_VERIFIED_MESSAGES:
         try:
-            with open("data/Scheduler/request_messages.yaml", "r") as f:
+            with open("data/StudentBot/request_messages.yaml", "r") as f:
                 return yaml.load(f, Loader=yaml.FullLoader)
         except FileNotFoundError:
             return {group: {} for group in self.groups}
@@ -308,7 +308,7 @@ class Verification:
             verification_group.setdefault(admin, {})[client.id] = message_id
 
     def save_messages(self):
-        with open("data/Scheduler/request_messages.yaml", "w") as f:
+        with open("data/StudentBot/request_messages.yaml", "w") as f:
             yaml.dump(self._messages, f)
 
     async def verify(self, client: Client, verifier: Client) -> None:
@@ -385,13 +385,11 @@ class ScheduleDB:
     def get_schedule(self, group_name: str, day: str, week: int) -> list:
         conn = psycopg2.connect(**load_schedule_db())
         cur = conn.cursor()
-        table_with_links = ''.join(f"{group_name}_links")
 
         query = f"""
-            SELECT s.time, s.subject, s.class_type, l.url
-            FROM {group_name} AS s
-            JOIN {table_with_links} l ON s.link_id = l.link_id
-            WHERE s.day_of_week = %s AND s.week = %s;
+            SELECT time, subject, class_type, url
+            FROM {group_name}
+            WHERE day_of_week = %s AND week = %s;
             """
 
         try:
@@ -410,6 +408,7 @@ class ScheduleDB:
         user = update.effective_user
         client = self.student_db.get_student(user.id)
         week = self.get_week()
+        self.stud_bot.logger.info(f"Current week is {week}")
 
         if not self.student_db.student_exist(user_id):
             await self.stud_bot.send(user.id, "You need to register and select a group first.")
@@ -438,10 +437,9 @@ class ScheduleDB:
     
     def get_group_name(self, update: telegram.Update) -> str:
         return self.clients[update.effective_user.id].group
-    
-    # TODO
+
     def get_week(self):
-        return 1
+        return datetime.date.today().isocalendar()[1] % 2 + 1
 
 
 class StudentBotService:
