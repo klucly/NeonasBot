@@ -180,30 +180,28 @@ class Admins:
     def __init__(self, service) -> None:
         self.logger = service.logger
         self.groups = service.groups
-        self._admins = self.load_admins()
+        self.service = service
 
     def get_admins(self, group: str) -> list[int]:
-        return self._admins[group]
-    
-    def add_admin(self, group: str, user_id: int) -> None:
-        self.logger.info(f"StudentBotService: Added admin {user_id} to group {group}")
-        self._admins[group].append(user_id)
-        self.save_admins()
+        self.service.student_db.cursor.execute("""
+            SELECT id FROM students WHERE
+            "group" = %s AND
+            is_admin = true;
+        """, (group, ))
 
-    def save_admins(self) -> None:
-        with open("data/StudentBot/admins.yaml", "w") as f:
-            yaml.dump(self._admins, f)
+        output = self.service.student_db.cursor.fetchone()
+        match output:
+            case None:
+                return ()
+            case _:
+                return output
     
-    def load_admins(self) -> dict[str, list[int]]:
-        try:
-            with open("data/StudentBot/admins.yaml", "r") as f:
-                return yaml.load(f, Loader=yaml.FullLoader)
-        
-        except FileNotFoundError:
-            return {group: [] for group in self.groups}
-        except yaml.error.YAMLError as e:
-            self.logger.exception(f"StudentBotService: Failed to load verification messages, file is corrupted:\n{e}")
-            return {group: [] for group in self.groups}
+    def add_admin(self, user_id: int) -> None:
+        self.logger.info(f"StudentBotService: Added admin {user_id}")
+        self.service.student_db.cursor.execute("""
+            UPDATE students SET is_admin = true WHERE id = %s;
+        """, (user_id,))
+        self.service.student_db.update_db()
 
 
 # Group: {Admin_id: {User_for_verification_id: admin_verification_message_id}}
@@ -502,8 +500,9 @@ class StudentBotService:
 
     async def self_promote(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
-        for group in self.groups:
-            self.admins.add_admin(group, update.effective_user.id)
+        self.admins.add_admin(update.effective_user.id)
+        # for group in self.groups:
+        #     self.admins.add_admin(group, update.effective_user.id)
 
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
