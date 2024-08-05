@@ -12,14 +12,21 @@ from dataclasses import dataclass
 import yaml
 import re
 import json
+import os
 
 
 def load_db_config(filename='./data/StudentBot/stud_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["studdbconfig"])
+    
     with open(filename, 'r') as file:
         return json.load(file)
 
 
 def load_schedule_db(filename='./data/StudentBot/schedule_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["scheduledbconfig"])
+    
     with open(filename, 'r') as file:
         return json.load(file)
 
