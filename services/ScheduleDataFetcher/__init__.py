@@ -1,4 +1,6 @@
 import asyncio
+import json
+import os
 from service_setup import SetupServiceData
 from time import perf_counter
 from typing import Iterator
@@ -50,10 +52,8 @@ class ScheduleDataFetcherService:
     def setup_google_api_connection(self) -> None:
         self.spreadsheet_id = "1gsxm1onrT76UYZxuT7b-qyO-haWiWk7igKwvSB0LLbg"
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
+        self.load_creds(scopes)
 
-        self.credentials = service_account.Credentials.from_service_account_file("./data/StudentBot/schedule_file_api_creds.json", scopes=scopes)
-        self.credentials.refresh(Request())
-        
         self.url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values:batchGet"
         self.params = {
             "ranges": [
@@ -65,6 +65,16 @@ class ScheduleDataFetcherService:
         self.headers = {
             "Authorization": f"Bearer {self.credentials.token}"
         }
+
+    def load_creds(self, scopes) -> None:
+        if "useenv" in os.environ and os.environ["useenv"] == "true":
+            self.credentials = \
+                service_account.Credentials.from_service_account_info(json.loads(os.environ["schedulefileapicreds"]), scopes=scopes)
+        else:
+            self.credentials = \
+                service_account.Credentials.from_service_account_file("./data/StudentBot/schedule_file_api_creds.json", scopes=scopes)
+
+        self.credentials.refresh(Request())
      
     def setup_db_connection(self) -> None:
         self.db_connection = psycopg2.connect(
