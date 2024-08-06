@@ -9,7 +9,6 @@ from telegram import InlineKeyboardButton
 import psycopg2
 
 from dataclasses import dataclass
-import yaml
 import re
 import json
 import os
