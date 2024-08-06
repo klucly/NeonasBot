@@ -275,22 +275,12 @@ class StudentDB:
 
 
 class Verification:
-    def __init__(self, service) -> None:
+    def __init__(self, service, student_db) -> None:
         self.logger = service.logger
         self.admins = service.admins
         self.groups = service.groups
+        self.student_db = student_db
         self.service = service
-        self._messages = self.load_messages()
-        
-    def load_messages(self) -> ADMIN_VERIFIED_MESSAGES:
-        try:
-            with open("data/StudentBot/request_messages.yaml", "r") as f:
-                return yaml.load(f, Loader=yaml.FullLoader)
-        except FileNotFoundError:
-            return {group: {} for group in self.groups}
-        except yaml.error.YAMLError as e:
-            self.logger.exception(f"StudentBotService: Failed to load verification messages, file is corrupted:\n{e}")
-            return {group: {} for group in self.groups}
 
     async def send(self, client: Client) -> None:
         self.logger.info(f"StudentBotService: Added verification request for {client.id} to group {client.group}")
@@ -304,17 +294,18 @@ class Verification:
             [InlineKeyboardButton("Discard", callback_data="discard_user")],
         ])
         await self._send_request_to_admins(client, verification_text, reply_markup=reply_markup)
-        self.save_messages()
 
     async def _send_request_to_admins(self, client: Client, text: str, **kwargs):
         for admin in self.admins.get_admins(client.group):
-            message_id = await self.service.send_raw(admin, text, **kwargs)
-            verification_group = self._messages[client.group]
-            verification_group.setdefault(admin, {})[client.id] = message_id
+            await self._send_message(client.group, admin, client.id, text, **kwargs)
 
-    def save_messages(self):
-        with open("data/StudentBot/request_messages.yaml", "w") as f:
-            yaml.dump(self._messages, f)
+    async def _send_message(self, group: str, admin: int, user: int, text: str, **kwargs) -> None:
+        message_id = await self.service.send_raw(admin, text, **kwargs)
+        self.student_db.cursor.execute("""
+            INSERT INTO verification_messages ("group", "admin", "user", "message")
+            VALUES (%s, %s, %s, %s)
+        """, (group, admin, user, message_id))
+        self.student_db.update_db()
 
     async def verify(self, client: Client, verifier: Client) -> None:
         self.logger.info(f"StudentBotService: Verified user {client.real_name} [{client.id}] to {client.group}")
@@ -364,15 +355,23 @@ class Verification:
         await self._admins_edit_message(client, discarded_admin_text)
 
     async def _admins_edit_message(self, client: Client, text: str):
-        for admin in self._messages[client.group]:
+        for admin, user, message in self.get_admin_messages_from_group(client.group):
             try:
                 await self.service.app.bot.edit_message_text(
                     chat_id=admin,
-                    message_id=self._messages[client.group][admin][client.id],
+                    message_id=message,
                     text=text
                 )
             except telegram.error.BadRequest:
                 pass
+
+    def get_admin_messages_from_group(self, group: str) -> list[tuple[int, int, int]]:
+        self.student_db.cursor.execute("""
+            SELECT "admin", "user", "message" FROM verification_messages
+            WHERE "group" = %s
+        """, (group,))
+
+        return self.student_db.cursor.fetchall()
     
     def get_client_from_verification_message(self, message: telegram.Message):
         user_id = int(re.search(r"\[(\d+)\]", message.text).group(1))
@@ -454,9 +453,9 @@ class StudentBotService:
 
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
-        self.verification = Verification(self)
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
+        self.verification = Verification(self, self.student_db)
 
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
     
