@@ -24,6 +24,11 @@ def load_schedule_db(filename='./data/StudentBot/schedule_db_config.json') -> di
         return json.load(file)
 
 
+def load_materials_db(filename='./data/StudentBot/materials_db_config.json') -> dict[str, str]:
+    with open(filename, 'r') as file:
+        return json.load(file)
+
+
 async def idle() -> None:
     while True:
         await asyncio.sleep(1)
@@ -266,8 +271,7 @@ class StudentDB:
 
     def update_db(self) -> None:
         self.connection.commit()
-
-
+    
 
 class Verification:
     def __init__(self, service) -> None:
@@ -409,6 +413,7 @@ class ScheduleDB:
         client = self.student_db.get_student(user.id)
         week = self.get_week()
         self.stud_bot.logger.info(f"Current week is {week}")
+        
 
         if not self.student_db.student_exist(user_id):
             await self.stud_bot.send(user.id, "You need to register and select a group first.")
@@ -441,6 +446,53 @@ class ScheduleDB:
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
+class MaterialDB:
+    def __init__(self, stud_bot):
+        self.connection = psycopg2.connect(**load_materials_db())
+        self.cursor = self.connection.cursor()
+        self.stud_bot = stud_bot
+        self.student_db = self.stud_bot.student_db
+
+    def get_disciplines(self):
+        conn = psycopg2.connect(**load_materials_db())
+        cur = conn.cursor()
+
+        cur.execute("SELECT DISTINCT discipline_name FROM materials")
+        disciplines = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        return disciplines
+
+    def get_materials(self, discipline: str) -> list:
+        query = """
+        SELECT material_name, url
+        FROM materials
+        WHERE discipline_name = %s
+        """
+
+        self.cursor.execute(query, (discipline, ))
+        materials = self.cursor.fetchall()
+
+        return materials
+    
+    def send_material(self, user_id: int, discipline_name: str, service: 'StudentBotService') -> None:
+        materials = self.get_materials(discipline_name)
+
+        if materials:
+            materials_text = f"Material from {discipline_name}:\n\n"
+            for material in materials:
+                materials_text += f"{material[0]}: {material[1]}\n"
+        else:
+            materials_text = f"No subject materials available {discipline_name}."
+
+        # Отправка пользователю
+        self.stud_bot.send(user_id, materials_text)
+    
+    def close(self):
+        self.cursor.close()
+        self.connection.close()
 
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
@@ -452,6 +504,7 @@ class StudentBotService:
         self.verification = Verification(self)
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
+        self.material_db = MaterialDB(self)
 
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
     
@@ -662,16 +715,28 @@ class Menu:
         await service.send(update.effective_user.id, "<Options>")
 
     @staticmethod
+    async def materials_menu(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
+        user = service.student_db.get_student(update.effective_user.id)
+        user = service.student_db.get_student(update.effective_user.id)
+        disciplines = service.material_db.get_disciplines()
+
+        keyboard = [[InlineKeyboardButton(d[0], callback_data=f"discipline_{d[0]}")] for d in disciplines]
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+
+        await service.send(user.id, "Chose discipline:", reply_markup=reply_markup)
+ 
+    @staticmethod
     async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         user = service.student_db.get_student(update.effective_user.id)
 
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Schedule", callback_data="schedule")],
-            [InlineKeyboardButton("Materials", callback_data="materials")],
+            [InlineKeyboardButton("Materials", callback_data="discipline")],
             [InlineKeyboardButton("Debts", callback_data="debts")],
             [InlineKeyboardButton("Options", callback_data="options")],
         ])
         await service.send(user.id, f"Hello, {user.real_name}", reply_markup=reply_markup)
+
 
 
 class Button:
@@ -758,7 +823,6 @@ class Button:
         await query.answer()
         await service.schedule_db.send_schedule(update, user_id, context, 'Friday')
 
-
     @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
@@ -800,10 +864,19 @@ class Button:
         await Menu.main_menu(service, update, context)
 
     @staticmethod
-    async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def discipline(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await query.answer()
-        await service.send(update.effective_user.id, "<Materials>")
+        await Menu.materials_menu(service, update, context)
+
+    @staticmethod
+    async def materials(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user = service.student_db.get_student(update.effective_user.id)
+
+        discipline_name = query.data.split('_', 1)[1]
+
+        await service.material_db.send_material(user.id, discipline_name, service)
     
     @staticmethod
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
