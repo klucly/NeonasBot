@@ -402,9 +402,6 @@ class ScheduleDB:
             await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_info}")
         except Exception as e:
             print(f"Error sending schedule: {e}")
-    
-    def get_group_name(self, update: telegram.Update) -> str:
-        return self.clients[update.effective_user.id].group
 
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
@@ -413,7 +410,6 @@ class ScheduleDB:
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
-        self.clients: dict[int, Client] = dict()
 
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
@@ -452,10 +448,21 @@ class StudentBotService:
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(CommandHandler("menu", self.menu))
         self.app.add_handler(CommandHandler("admin", self.self_promote))
+        self.app.add_handler(CommandHandler("forgetme", self.forget_me))
         self.app.add_handler(CallbackQueryHandler(self.button_controller))
         self.app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.text_controller))
         self.app.add_handler(MessageHandler(filters.ALL, self.user_input_deleter))
+
+    async def forget_me(self, update: telegram.Update, context: CallbackContext) -> None:
+        user = update.effective_user
+        self.student_db.cursor.execute("""
+            DELETE FROM students
+            WHERE id = %s
+        """, (user.id,))
+        
+        await delete_user_request_if_text(update)
+        self.student_db.update_db()
     
     async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
