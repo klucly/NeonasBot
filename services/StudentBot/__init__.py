@@ -1,6 +1,6 @@
 import datetime
 from typing import Any
-from service_setup import SetupServiceData, get_token
+from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config
 from telegram.ext import ApplicationBuilder, CommandHandler
 import telegram
 import asyncio
@@ -10,24 +10,6 @@ import psycopg2
 
 from dataclasses import dataclass
 import re
-import json
-import os
-
-
-def load_db_config(filename='./data/StudentBot/stud_db_config.json') -> dict[str, str]:
-    if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["studdbconfig"])
-    
-    with open(filename, 'r') as file:
-        return json.load(file)
-
-
-def load_schedule_db(filename='./data/StudentBot/schedule_db_config.json') -> dict[str, str]:
-    if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["scheduledbconfig"])
-    
-    with open(filename, 'r') as file:
-        return json.load(file)
 
 
 async def idle() -> None:
@@ -189,11 +171,9 @@ class Admins:
         """, (group, ))
 
         output = self.service.student_db.cursor.fetchone()
-        match output:
-            case None:
-                return ()
-            case _:
-                return output
+        if output is None:
+            return ()
+        return output
     
     def add_admin(self, user_id: int) -> None:
         self.logger.info(f"StudentBotService: Added admin {user_id}")
@@ -203,17 +183,12 @@ class Admins:
         self.service.student_db.update_db()
 
 
-# Group: {Admin_id: {User_for_verification_id: admin_verification_message_id}}
-ADMIN_VERIFIED_MESSAGES = dict[str, dict[int, dict[int, int]]]
-
-
 class StudentDB:
     def __init__(self):
-        self.connection = psycopg2.connect(**load_db_config())
+        self.connection = psycopg2.connect(**load_student_db_config())
         self.cursor = self.connection.cursor()
 
     def add_student(self, id: int) -> Client:
-
         query = """
         INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -227,7 +202,6 @@ class StudentDB:
         return student
 
     def update_student_verification(self, id: int, verified: bool) -> None:
-
         query = """
         UPDATE students 
         SET verified = %s
@@ -238,7 +212,6 @@ class StudentDB:
         self.connection.commit()
 
     def get_student(self, id: int) -> Client | None:
-
         query = """
         SELECT * FROM students
         WHERE id = %s
@@ -270,7 +243,6 @@ class StudentDB:
 
     def update_db(self) -> None:
         self.connection.commit()
-
 
 
 class Verification:
@@ -380,13 +352,13 @@ class Verification:
 
 class ScheduleDB:
     def __init__(self, stud_bot):
-        self.connection = psycopg2.connect(**load_db_config())
+        self.connection = psycopg2.connect(**load_student_db_config())
         self.cursor = self.connection.cursor()
         self.stud_bot = stud_bot
         self.student_db = self.stud_bot.student_db
 
     def get_schedule(self, group_name: str, day: str, week: int) -> list:
-        conn = psycopg2.connect(**load_schedule_db())
+        conn = psycopg2.connect(**load_schedule_db_config())
         cur = conn.cursor()
 
         query = f"""
@@ -411,32 +383,25 @@ class ScheduleDB:
         user = update.effective_user
         client = self.student_db.get_student(user.id)
         week = self.get_week()
-        self.stud_bot.logger.info(f"Current week is {week}")
-
-        if not self.student_db.student_exist(user_id):
-            await self.stud_bot.send(user.id, "You need to register and select a group first.")
-            return
 
         schedule = self.get_schedule(client.group, day, week)
 
         if not schedule:
             await self.stud_bot.send(user.id, f"No schedule found for {day}.")
-        else:
-            schedule_info = []
-            for row in schedule:
-                start_time = row[0]
-                subject = row[1]
-                class_type = row[2]
-                link = row[3]
-                schedule_info.append(
-                    f"{start_time}: {subject}, ({class_type}) [{link}]\n"
-                )
+            return
+        
+        schedule_info = ""
+        for row in schedule:
+            start_time = row[0]
+            subject = row[1]
+            class_type = row[2]
+            link = row[3]
+            schedule_info += f"{start_time}: {subject}, ({class_type}) [{link}]\n"
 
-            schedule_text = "\n".join(schedule_info)
-            try:
-                await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_text}")
-            except Exception as e:
-                print(f"Error sending schedule: {e}")
+        try:
+            await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_info}")
+        except Exception as e:
+            print(f"Error sending schedule: {e}")
     
     def get_group_name(self, update: telegram.Update) -> str:
         return self.clients[update.effective_user.id].group
@@ -499,8 +464,6 @@ class StudentBotService:
     async def self_promote(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
         self.admins.add_admin(update.effective_user.id)
-        # for group in self.groups:
-        #     self.admins.add_admin(group, update.effective_user.id)
 
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
