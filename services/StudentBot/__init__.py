@@ -506,14 +506,36 @@ class StudentBotService:
         query = update.callback_query
 
         if not self.student_db.student_exist(query.from_user.id):
-            await query.answer(text="Message is broken :0\nWrite /start to fix this >_<")
+            await query.answer(text="/start to start the bot")
             return
 
-        if hasattr(Button, query.data):
-            await getattr(Button, query.data)(self, update, context)
+        name, args = self.parse_button_query(query.data)
+        if hasattr(Button, name):
+            await getattr(Button, name)(self, update, context, *args)
         else:
-            self.logger.error(f"Button: {query.data} not found. User: {query.from_user.name} | {query.message.to_json()}")
+            self.logger.error(f"Button: {name} not found. User: {query.from_user.name} | {query.message.to_json()}")
             await query.answer(text="Invalid option selected.")
+
+    def parse_button_query(self, query: str) -> tuple[str, list[str]]:
+        '''
+        Parsing query for button controller.
+
+        Valid syntax:
+        * button_name
+        * button_name(arg1)
+        * button_name(arg1, arg2, ...)
+        '''
+
+        if "(" not in query:
+            return query, []
+        
+        if query[-1] != ")":
+            raise ValueError(f"{query} has invalid query format. Expected ending with `)`")
+        
+        name_end = query.index("(")
+        name = query[:name_end]
+        args = query[name_end + 1:-1].split(",")
+        return name, args
 
     async def text_controller(self, update: telegram.Update, context: CallbackContext) -> int:
         user = update.effective_user
@@ -618,10 +640,10 @@ class Menu:
     @staticmethod
     async def group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Km-31", callback_data="group_31")],
-            [InlineKeyboardButton("Km-32", callback_data="group_32")],
-            [InlineKeyboardButton("Km-33", callback_data="group_33")],
-            [InlineKeyboardButton("Not a student", callback_data="group_none")],
+            [InlineKeyboardButton("Km-31", callback_data="choose_group(km31)")],
+            [InlineKeyboardButton("Km-32", callback_data="choose_group(km32)")],
+            [InlineKeyboardButton("Km-33", callback_data="choose_group(km33)")],
+            [InlineKeyboardButton("Not a student", callback_data="not_a_student")],
         ])
         await service.send(update.effective_user.id, "Choose your group:", reply_markup=reply_markup)
 
@@ -653,11 +675,11 @@ class Menu:
     @staticmethod
     async def schedule_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Понеділок", callback_data="schedule_mon")],
-            [InlineKeyboardButton("Вівторок", callback_data="schedule_tue")],
-            [InlineKeyboardButton("Середа", callback_data="schedule_wed")],
-            [InlineKeyboardButton("Четвер", callback_data="schedule_thu")],
-            [InlineKeyboardButton("П'ятниця", callback_data="schedule_fri")]
+            [InlineKeyboardButton("Понеділок", callback_data="schedule_day(Monday)")],
+            [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Tuesday)")],
+            [InlineKeyboardButton("Середа", callback_data="schedule_day(Wednesday)")],
+            [InlineKeyboardButton("Четвер", callback_data="schedule_day(Thursday)")],
+            [InlineKeyboardButton("П'ятниця", callback_data="schedule_day(Friday)")]
         ])
         await service.send(update.effective_user.id, "Enter the day:", reply_markup=reply_markup)
 
@@ -680,34 +702,12 @@ class Menu:
 
 class Button:
     @staticmethod
-    async def group_31(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def choose_group(service: StudentBotService, update: telegram.Update, context: CallbackContext, group: str) -> None:
         query = update.callback_query
         client = service.student_db.get_student(query.from_user.id)
-        client.group = "km31"
+        client.group = group
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
-
-    @staticmethod
-    async def group_32(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        client = service.student_db.get_student(query.from_user.id)
-        client.group = "km32"
-        await query.answer()
-        await Menu.enter_name_menu(service, update, context)
-
-    @staticmethod
-    async def group_33(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        client = service.student_db.get_student(query.from_user.id)
-        client.group = "km33"
-        await query.answer()
-        await Menu.enter_name_menu(service, update, context)
-
-    @staticmethod
-    async def group_none(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        await query.answer()
-        await Menu.unverified_menu(service, update, context)
 
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -728,40 +728,11 @@ class Button:
         await Menu.schedule_menu(service, update, context)
 
     @staticmethod
-    async def schedule_mon(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def schedule_day(service: StudentBotService, update: telegram.Update, context: CallbackContext, day: str) -> None:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Monday')
-
-    @staticmethod
-    async def schedule_tue(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Tuesday')
-
-    @staticmethod
-    async def schedule_wed(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Wednesday')
-
-    @staticmethod
-    async def schedule_thu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Thursday')
-
-    @staticmethod
-    async def schedule_fri(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Friday')
-
+        await service.schedule_db.send_schedule(update, user_id, context, day)
 
     @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
