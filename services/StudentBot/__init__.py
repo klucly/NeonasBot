@@ -403,6 +403,13 @@ class ScheduleDB:
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
+    @staticmethod
+    def unverified_need_to_choose_group(context: CallbackContext) -> bool:
+        if "unverified_choose_group_for_schedule" not in context.chat_data:
+            return True
+        
+        return context.chat_data["unverified_choose_group_for_schedule"]
+
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
@@ -618,6 +625,15 @@ class Menu:
         await service.send(update.effective_user.id, "Choose your group:", reply_markup=reply_markup)
 
     @staticmethod
+    async def schedule_group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Km-31", callback_data="schedule_choose_group(km31)")],
+            [InlineKeyboardButton("Km-32", callback_data="schedule_choose_group(km32)")],
+            [InlineKeyboardButton("Km-33", callback_data="schedule_choose_group(km33)")],
+        ])
+        await service.send(update.effective_user.id, "Choose the group:", reply_markup=reply_markup)
+
+    @staticmethod
     async def enter_name_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await service.send(update.effective_user.id, "Enter your full name:")
@@ -644,6 +660,12 @@ class Menu:
 
     @staticmethod
     async def schedule_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        
+        if not client.is_verified and service.schedule_db.unverified_need_to_choose_group(context):
+            return await Menu.schedule_group_choice_menu(service, update, context)
+        context.chat_data["unverified_choose_group_for_schedule"] = True
+
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Понеділок", callback_data="schedule_day(Monday)")],
             [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Tuesday)")],
@@ -678,6 +700,15 @@ class Button:
         client.group = group
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
+
+    @staticmethod
+    async def schedule_choose_group(service: StudentBotService, update: telegram.Update, context: CallbackContext, group: str) -> None:
+        context.chat_data["unverified_choose_group_for_schedule"] = False
+        query = update.callback_query
+        client = service.student_db.get_student(query.from_user.id)
+        client.group = group
+        await query.answer()
+        await Menu.schedule_menu(service, update, context)
 
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
