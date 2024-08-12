@@ -1,6 +1,6 @@
 import datetime
 from typing import Any
-from service_setup import SetupServiceData, get_token
+from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_material_db_config
 from telegram.ext import ApplicationBuilder, CommandHandler
 import telegram
 import asyncio
@@ -10,32 +10,6 @@ import psycopg2
 
 from dataclasses import dataclass
 import re
-import json
-import os
-
-
-def load_students_db(filename='./data/StudentBot/configs/stud_db_config.json') -> dict[str, str]:
-    if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["studdbconfig"])
-    
-    with open(filename, 'r') as file:
-        return json.load(file)
-
-
-def load_schedule_db(filename='./data/StudentBot/configs/schedule_db_config.json') -> dict[str, str]:
-    if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["scheduledbconfig"])
-    
-    with open(filename, 'r') as file:
-        return json.load(file)
-
-
-def load_materials_db(filename='./data/StudentBot/configs/materials_db_config.json') -> dict[str, str]:
-    if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["materialdbconfig"])
-
-    with open(filename, 'r') as file:
-        return json.load(file)
 
 
 async def idle() -> None:
@@ -69,6 +43,7 @@ class Client:
     _main_message: int | None = None
     _main_message_first: bool = True
     _options: dict[str, Any] = None
+    _is_admin: bool = True
     student_db: Any = None
     
     @property
@@ -182,6 +157,10 @@ class Client:
     def options(self, options: dict[str, Any]) -> None:
         self._options = options
 
+    @property
+    def is_admin(self) -> bool:
+        return self._is_admin
+
 
 class Admins:
     def __init__(self, service) -> None:
@@ -197,11 +176,9 @@ class Admins:
         """, (group, ))
 
         output = self.service.student_db.cursor.fetchone()
-        match output:
-            case None:
-                return ()
-            case _:
-                return output
+        if output is None:
+            return ()
+        return output
     
     def add_admin(self, user_id: int) -> None:
         self.logger.info(f"StudentBotService: Added admin {user_id}")
@@ -211,23 +188,18 @@ class Admins:
         self.service.student_db.update_db()
 
 
-# Group: {Admin_id: {User_for_verification_id: admin_verification_message_id}}
-ADMIN_VERIFIED_MESSAGES = dict[str, dict[int, dict[int, int]]]
-
-
 class StudentDB:
     def __init__(self):
-        self.connection = psycopg2.connect(**load_students_db())
+        self.connection = psycopg2.connect(**load_student_db_config())
         self.cursor = self.connection.cursor()
 
     def add_student(self, id: int) -> Client:
-
         query = """
-        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first, is_admin)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
 
-        self.cursor.execute(query, (id, False, None, None, False, None, True))
+        self.cursor.execute(query, (id, False, None, None, False, None, True, False))
         self.connection.commit()
 
         student = Client(id, student_db=self)
@@ -235,7 +207,6 @@ class StudentDB:
         return student
 
     def update_student_verification(self, id: int, verified: bool) -> None:
-
         query = """
         UPDATE students 
         SET verified = %s
@@ -246,7 +217,6 @@ class StudentDB:
         self.connection.commit()
 
     def get_student(self, id: int) -> Client | None:
-
         query = """
         SELECT * FROM students
         WHERE id = %s
@@ -265,7 +235,8 @@ class StudentDB:
                          _is_inputting_name = student_info[4],
                          _main_message = student_info[5],
                          _main_message_first = student_info[6],
-                         student_db = self) 
+                         _is_admin=student_info[7],
+                         student_db = self)
         
         return student
 
@@ -278,7 +249,7 @@ class StudentDB:
 
     def update_db(self) -> None:
         self.connection.commit()
-    
+
 
 class Verification:
     def __init__(self, service, student_db) -> None:
@@ -387,13 +358,13 @@ class Verification:
 
 class ScheduleDB:
     def __init__(self, stud_bot):
-        self.connection = psycopg2.connect(**load_students_db())
+        self.connection = psycopg2.connect(**load_student_db_config())
         self.cursor = self.connection.cursor()
         self.stud_bot = stud_bot
         self.student_db = self.stud_bot.student_db
 
     def get_schedule(self, group_name: str, day: str, week: int) -> list:
-        conn = psycopg2.connect(**load_schedule_db())
+        conn = psycopg2.connect(**load_schedule_db_config())
         cur = conn.cursor()
 
         query = f"""
@@ -418,53 +389,150 @@ class ScheduleDB:
         user = update.effective_user
         client = self.student_db.get_student(user.id)
         week = self.get_week()
-        self.stud_bot.logger.info(f"Current week is {week}")
-        
-
-        if not self.student_db.student_exist(user_id):
-            await self.stud_bot.send(user.id, "You need to register and select a group first.")
-            return
 
         schedule = self.get_schedule(client.group, day, week)
 
         if not schedule:
             await self.stud_bot.send(user.id, f"No schedule found for {day}.")
-        else:
-            schedule_info = []
-            for row in schedule:
-                start_time = row[0]
-                subject = row[1]
-                class_type = row[2]
-                link = row[3]
-                schedule_info.append(
-                    f"{start_time}: {subject}, ({class_type}) [{link}]\n"
-                )
+            return
+        
+        schedule_info = ""
+        for row in schedule:
+            start_time = row[0]
+            subject = row[1]
+            class_type = row[2]
+            link = row[3]
+            schedule_info += f"{start_time}: {subject}, ({class_type}) [{link}]\n"
 
-            schedule_text = "\n".join(schedule_info)
-            try:
-                await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_text}")
-            except Exception as e:
-                print(f"Error sending schedule: {e}")
-    
-    def get_group_name(self, update: telegram.Update) -> str:
-        return self.clients[update.effective_user.id].group
+        try:
+            await self.stud_bot.send(user.id, f"Schedule for {day}:\n{schedule_info}")
+        except Exception as e:
+            print(f"Error sending schedule: {e}")
+
+    @staticmethod
+    def unverified_need_to_choose_group(context: CallbackContext) -> bool:
+        if "unverified_choose_group_for_schedule" not in context.chat_data:
+            return True
+        
+        return context.chat_data["unverified_choose_group_for_schedule"]
 
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
 
+class MaterialDB:
+    def __init__(self, stud_bot):
+        self.connection = psycopg2.connect(**load_student_db_config())
+        self.cursor = self.connection.cursor()
+        self.stud_bot = stud_bot
+        self.student_db = self.stud_bot.student_db
+
+    def get_material(self, group_name: str) -> list:
+        conn = psycopg2.connect(**load_material_db_config())
+        cur = conn.cursor()
+
+        query = f"""
+            SELECT material_name, url
+            FROM materials_km3x
+            WHERE "group" = '{group_name}';
+            """
+
+        try:
+            cur.execute(query,)
+            rows = cur.fetchall()
+        except Exception as e:
+            print(f"Database error: {e}")
+            rows = []
+        finally:
+            cur.close()
+            conn.close()
+
+        return rows
+    
+    async def send_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+
+        material = self.get_material(client.group)
+
+        if not material:
+            self.stud_bot.send(user.id, f"No material found for {client.group}.")
+            return
+
+        material_info = ""
+        for row in material:
+            material_name = row[0]
+            url = row[1]
+
+            material_info += f"{material_name} [{url}]\n\n"
+
+        try:
+            await self.stud_bot.send(user.id, f"Material for {client.group}:\n{material_info}")
+        except Exception as e:
+            print(f"Error sending material: {e}")
+
+    def add_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+
+        material_name = context.chat_data["material_name"]
+        url = context.chat_data["material_url"]
+
+        conn = psycopg2.connect(**load_material_db_config())
+        cur = conn.cursor()
+
+        query = f"""
+            INSERT INTO materials_km3x ("group", material_name, url)
+            VALUES ({client.group}, {material_name}, {url});
+            """
+
+        try:
+            cur.execute(query,)
+            conn.commit()
+        except Exception as e:
+            print(f"Database error: {e}")
+        finally:
+            cur.close()
+            conn.close()
+
+        self.stud_bot.send(user.id, f"Material added for {client.group}:\n{material_name} [{url}]")
+
+    def delete_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+
+        material_name = context.chat_data["material_name"]
+        url = context.chat_data["material_url"]
+
+        conn = psycopg2.connect(**load_material_db_config())
+        cur = conn.cursor()
+
+        query = f"""
+            DELETE FROM materials_km3x
+            WHERE "group" = '{client.group}' AND material_name = '{material_name}' AND url = '{url}';
+            """
+
+        try:
+            cur.execute(query,)
+            conn.commit()
+        except Exception as e:
+            print(f"Database error: {e}")
+        finally:
+            cur.close()
+            conn.close()
+
+        self.stud_bot.send(user.id, f"Material deleted for {client.group}:\n{material_name} [{url}]")
+
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
-        self.clients: dict[int, Client] = dict()
 
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
-        self.verification = Verification(self, self.student_db)
         self.material_db = MaterialDB(self)
-
+        self.verification = Verification(self, self.student_db)
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
     
     async def run(self) -> None:
@@ -496,10 +564,21 @@ class StudentBotService:
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(CommandHandler("menu", self.menu))
         self.app.add_handler(CommandHandler("admin", self.self_promote))
+        self.app.add_handler(CommandHandler("forgetme", self.forget_me))
         self.app.add_handler(CallbackQueryHandler(self.button_controller))
         self.app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.text_controller))
         self.app.add_handler(MessageHandler(filters.ALL, self.user_input_deleter))
+
+    async def forget_me(self, update: telegram.Update, context: CallbackContext) -> None:
+        user = update.effective_user
+        self.student_db.cursor.execute("""
+            DELETE FROM students
+            WHERE id = %s
+        """, (user.id,))
+        
+        await delete_user_request_if_text(update)
+        self.student_db.update_db()
     
     async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
@@ -508,21 +587,41 @@ class StudentBotService:
     async def self_promote(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
         self.admins.add_admin(update.effective_user.id)
-        # for group in self.groups:
-        #     self.admins.add_admin(group, update.effective_user.id)
 
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
 
         if not self.student_db.student_exist(query.from_user.id):
-            await query.answer(text="Message is broken :0\nWrite /start to fix this >_<")
+            await query.answer(text="/start to start the bot")
             return
 
-        if hasattr(Button, query.data):
-            await getattr(Button, query.data)(self, update, context)
+        name, args = self.parse_button_query(query.data)
+        if hasattr(Button, name):
+            await getattr(Button, name)(self, update, context, *args)
         else:
-            self.logger.error(f"Button: {query.data} not found. User: {query.from_user.name} | {query.message.to_json()}")
+            self.logger.error(f"Button: {name} not found. User: {query.from_user.name} | {query.message.to_json()}")
             await query.answer(text="Invalid option selected.")
+
+    def parse_button_query(self, query: str) -> tuple[str, list[str]]:
+        '''
+        Parsing query for button controller.
+
+        Valid syntax:
+        * button_name
+        * button_name(arg1)
+        * button_name(arg1, arg2, ...)
+        '''
+
+        if "(" not in query:
+            return query, []
+        
+        if query[-1] != ")":
+            raise ValueError(f"{query} has invalid query format. Expected ending with `)`")
+        
+        name_end = query.index("(")
+        name = query[:name_end]
+        args = query[name_end + 1:-1].split(",")
+        return name, args
 
     async def text_controller(self, update: telegram.Update, context: CallbackContext) -> int:
         user = update.effective_user
@@ -627,12 +726,21 @@ class Menu:
     @staticmethod
     async def group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Km-31", callback_data="group_31")],
-            [InlineKeyboardButton("Km-32", callback_data="group_32")],
-            [InlineKeyboardButton("Km-33", callback_data="group_33")],
-            [InlineKeyboardButton("Not a student", callback_data="group_none")],
+            [InlineKeyboardButton("Km-31", callback_data="choose_group(km31)")],
+            [InlineKeyboardButton("Km-32", callback_data="choose_group(km32)")],
+            [InlineKeyboardButton("Km-33", callback_data="choose_group(km33)")],
+            [InlineKeyboardButton("Not a student", callback_data="not_a_student")],
         ])
         await service.send(update.effective_user.id, "Choose your group:", reply_markup=reply_markup)
+
+    @staticmethod
+    async def schedule_group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Km-31", callback_data="schedule_choose_group(km31)")],
+            [InlineKeyboardButton("Km-32", callback_data="schedule_choose_group(km32)")],
+            [InlineKeyboardButton("Km-33", callback_data="schedule_choose_group(km33)")],
+        ])
+        await service.send(update.effective_user.id, "Choose the group:", reply_markup=reply_markup)
 
     @staticmethod
     async def enter_name_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -661,12 +769,18 @@ class Menu:
 
     @staticmethod
     async def schedule_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        
+        if not client.is_verified and service.schedule_db.unverified_need_to_choose_group(context):
+            return await Menu.schedule_group_choice_menu(service, update, context)
+        context.chat_data["unverified_choose_group_for_schedule"] = True
+
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Понеділок", callback_data="schedule_mon")],
-            [InlineKeyboardButton("Вівторок", callback_data="schedule_tue")],
-            [InlineKeyboardButton("Середа", callback_data="schedule_wed")],
-            [InlineKeyboardButton("Четвер", callback_data="schedule_thu")],
-            [InlineKeyboardButton("П'ятниця", callback_data="schedule_fri")]
+            [InlineKeyboardButton("Понеділок", callback_data="schedule_day(Monday)")],
+            [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Tuesday)")],
+            [InlineKeyboardButton("Середа", callback_data="schedule_day(Wednesday)")],
+            [InlineKeyboardButton("Четвер", callback_data="schedule_day(Thursday)")],
+            [InlineKeyboardButton("П'ятниця", callback_data="schedule_day(Friday)")]
         ])
         await service.send(update.effective_user.id, "Enter the day:", reply_markup=reply_markup)
 
@@ -686,37 +800,34 @@ class Menu:
         ])
         await service.send(user.id, f"Hello, {user.real_name}", reply_markup=reply_markup)
 
+    @staticmethod
+    async def admin_material_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Add material", callback_data="add_material")],
+            [InlineKeyboardButton("Delete material", callback_data="delete_material")],
+            [InlineKeyboardButton("View material", callback_data="view_material")],
+            [InlineKeyboardButton("Back", callback_data="restart")],
+        ])
+        await service.send(update.effective_user.id, "Choose an option:", reply_markup=reply_markup)
+
 
 class Button:
     @staticmethod
-    async def group_31(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def choose_group(service: StudentBotService, update: telegram.Update, context: CallbackContext, group: str) -> None:
         query = update.callback_query
         client = service.student_db.get_student(query.from_user.id)
-        client.group = "km31"
+        client.group = group
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
 
     @staticmethod
-    async def group_32(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def schedule_choose_group(service: StudentBotService, update: telegram.Update, context: CallbackContext, group: str) -> None:
+        context.chat_data["unverified_choose_group_for_schedule"] = False
         query = update.callback_query
         client = service.student_db.get_student(query.from_user.id)
-        client.group = "km32"
+        client.group = group
         await query.answer()
-        await Menu.enter_name_menu(service, update, context)
-
-    @staticmethod
-    async def group_33(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        client = service.student_db.get_student(query.from_user.id)
-        client.group = "km33"
-        await query.answer()
-        await Menu.enter_name_menu(service, update, context)
-
-    @staticmethod
-    async def group_none(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        await query.answer()
-        await Menu.unverified_menu(service, update, context)
+        await Menu.schedule_menu(service, update, context)
 
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -737,39 +848,11 @@ class Button:
         await Menu.schedule_menu(service, update, context)
 
     @staticmethod
-    async def schedule_mon(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+    async def schedule_day(service: StudentBotService, update: telegram.Update, context: CallbackContext, day: str) -> None:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Monday')
-
-    @staticmethod
-    async def schedule_tue(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Tuesday')
-
-    @staticmethod
-    async def schedule_wed(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Wednesday')
-
-    @staticmethod
-    async def schedule_thu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Thursday')
-
-    @staticmethod
-    async def schedule_fri(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, 'Friday')
+        await service.schedule_db.send_schedule(update, user_id, context, day)
 
     @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -810,7 +893,41 @@ class Button:
         query = update.callback_query
         await query.answer()
         await Menu.main_menu(service, update, context)
-    
+
+    @staticmethod
+    async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext):
+        client = service.student_db.get_student(update.effective_user.id)
+        query = update.callback_query
+        user_id = query.from_user.id
+
+
+        if client.is_admin:
+            await Menu.admin_material_menu(service, update, context)
+            return
+        
+        await service.material_db.send_material(update, user_id, context)
+
+    @staticmethod
+    async def add_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        service.material_db.add_material(update, user_id, context)
+        
+    @staticmethod
+    async def delete_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        service.material_db.delete_material(update, user_id, context)
+
+    @staticmethod
+    async def view_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        service.material_db.send_material(update, user_id, context)
+
     @staticmethod
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query

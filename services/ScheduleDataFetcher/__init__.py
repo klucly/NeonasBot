@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from service_setup import SetupServiceData
+from service_setup import SetupServiceData, load_schedule_db_config
 from time import perf_counter
 from typing import Iterator
 from google.oauth2 import service_account
@@ -79,10 +79,7 @@ class ScheduleDataFetcherService:
     # TODO confidential data 
     def setup_db_connection(self) -> None:
         self.db_connection = psycopg2.connect(
-            host="localhost",
-            database="schedule_db",
-            user="postgres",
-            password="talokin228@"
+            **load_schedule_db_config()
         )
 
         self.db_cursor = self.db_connection.cursor()
@@ -106,14 +103,14 @@ class ScheduleDataFetcherService:
         self.setup_data.logger.info("Data fetcher service: Fetching data")
         info = await self.fetch_data()
         self.setup_data.logger.info("Data fetcher service: Parsing data")
-        self.parse(info)
+        self.parse_to_db(info)
         self.db_connection.commit()
 
         self.setup_data.logger.info(f"Data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
 
         await asyncio.sleep(2*60)
 
-    def parse(self, info) -> None:
+    def parse_to_db(self, info) -> None:
         for group_number, group in enumerate(("km31", "km32", "km33")):
             for week in (1, 2):
                 batch_id = group_number*2 + week-1
@@ -122,7 +119,7 @@ class ScheduleDataFetcherService:
                 for line in parse_range(data, week=week):
                     self.insert_data(group, line)
 
-    def insert_data(self, group, line) -> None:
+    def insert_data(self, group: str, line: LINE) -> None:
         query = f"""
         INSERT INTO {group} (day_of_week, time, subject, class_type, week, url)
         VALUES (%s, %s, %s, %s, %s, %s)

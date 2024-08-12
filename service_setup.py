@@ -22,3 +22,27 @@ def get_token(id_: str):
     
     with open('data\\tokens.json') as f:
         return _clear_unwanted_characters(json.load(f)[id_])
+
+
+def load_student_db_config(filename='./data/StudentBot/configs/stud_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["studdbconfig"])
+    
+    with open(filename, 'r') as file:
+        return json.load(file)
+
+
+def load_schedule_db_config(filename='./data/StudentBot/configs/schedule_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["scheduledbconfig"])
+    
+    with open(filename, 'r') as file:
+        return json.load(file)
+    
+
+def load_material_db_config(filename='./data/StudentBot/configs/materials_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["materialconfig"])
+    
+    with open(filename, 'r') as file:
+        return json.load(file)
