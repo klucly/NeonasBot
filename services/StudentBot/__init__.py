@@ -9,22 +9,31 @@ from telegram import InlineKeyboardButton
 import psycopg2
 
 from dataclasses import dataclass
-import yaml
 import re
 import json
+import os
 
 
-def load_db_config(filename='./data/StudentBot/stud_db_config.json') -> dict[str, str]:
+def load_students_db(filename='./data/StudentBot/configs/stud_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["studdbconfig"])
+    
     with open(filename, 'r') as file:
         return json.load(file)
 
 
-def load_schedule_db(filename='./data/StudentBot/schedule_db_config.json') -> dict[str, str]:
+def load_schedule_db(filename='./data/StudentBot/configs/schedule_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["scheduledbconfig"])
+    
     with open(filename, 'r') as file:
         return json.load(file)
 
 
-def load_materials_db(filename='./data/StudentBot/materials_db_config.json') -> dict[str, str]:
+def load_materials_db(filename='./data/StudentBot/configs/materials_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["materialdbconfig"])
+
     with open(filename, 'r') as file:
         return json.load(file)
 
@@ -178,30 +187,28 @@ class Admins:
     def __init__(self, service) -> None:
         self.logger = service.logger
         self.groups = service.groups
-        self._admins = self.load_admins()
+        self.service = service
 
     def get_admins(self, group: str) -> list[int]:
-        return self._admins[group]
-    
-    def add_admin(self, group: str, user_id: int) -> None:
-        self.logger.info(f"StudentBotService: Added admin {user_id} to group {group}")
-        self._admins[group].append(user_id)
-        self.save_admins()
+        self.service.student_db.cursor.execute("""
+            SELECT id FROM students WHERE
+            "group" = %s AND
+            is_admin = true;
+        """, (group, ))
 
-    def save_admins(self) -> None:
-        with open("data/StudentBot/admins.yaml", "w") as f:
-            yaml.dump(self._admins, f)
+        output = self.service.student_db.cursor.fetchone()
+        match output:
+            case None:
+                return ()
+            case _:
+                return output
     
-    def load_admins(self) -> dict[str, list[int]]:
-        try:
-            with open("data/StudentBot/admins.yaml", "r") as f:
-                return yaml.load(f, Loader=yaml.FullLoader)
-        
-        except FileNotFoundError:
-            return {group: [] for group in self.groups}
-        except yaml.error.YAMLError as e:
-            self.logger.exception(f"StudentBotService: Failed to load verification messages, file is corrupted:\n{e}")
-            return {group: [] for group in self.groups}
+    def add_admin(self, user_id: int) -> None:
+        self.logger.info(f"StudentBotService: Added admin {user_id}")
+        self.service.student_db.cursor.execute("""
+            UPDATE students SET is_admin = true WHERE id = %s;
+        """, (user_id,))
+        self.service.student_db.update_db()
 
 
 # Group: {Admin_id: {User_for_verification_id: admin_verification_message_id}}
@@ -210,7 +217,7 @@ ADMIN_VERIFIED_MESSAGES = dict[str, dict[int, dict[int, int]]]
 
 class StudentDB:
     def __init__(self):
-        self.connection = psycopg2.connect(**load_db_config())
+        self.connection = psycopg2.connect(**load_students_db())
         self.cursor = self.connection.cursor()
 
     def add_student(self, id: int) -> Client:
@@ -274,22 +281,12 @@ class StudentDB:
     
 
 class Verification:
-    def __init__(self, service) -> None:
+    def __init__(self, service, student_db) -> None:
         self.logger = service.logger
         self.admins = service.admins
         self.groups = service.groups
+        self.student_db = student_db
         self.service = service
-        self._messages = self.load_messages()
-        
-    def load_messages(self) -> ADMIN_VERIFIED_MESSAGES:
-        try:
-            with open("data/StudentBot/request_messages.yaml", "r") as f:
-                return yaml.load(f, Loader=yaml.FullLoader)
-        except FileNotFoundError:
-            return {group: {} for group in self.groups}
-        except yaml.error.YAMLError as e:
-            self.logger.exception(f"StudentBotService: Failed to load verification messages, file is corrupted:\n{e}")
-            return {group: {} for group in self.groups}
 
     async def send(self, client: Client) -> None:
         self.logger.info(f"StudentBotService: Added verification request for {client.id} to group {client.group}")
@@ -303,17 +300,18 @@ class Verification:
             [InlineKeyboardButton("Discard", callback_data="discard_user")],
         ])
         await self._send_request_to_admins(client, verification_text, reply_markup=reply_markup)
-        self.save_messages()
 
     async def _send_request_to_admins(self, client: Client, text: str, **kwargs):
         for admin in self.admins.get_admins(client.group):
-            message_id = await self.service.send_raw(admin, text, **kwargs)
-            verification_group = self._messages[client.group]
-            verification_group.setdefault(admin, {})[client.id] = message_id
+            await self._send_message(client.group, admin, client.id, text, **kwargs)
 
-    def save_messages(self):
-        with open("data/StudentBot/request_messages.yaml", "w") as f:
-            yaml.dump(self._messages, f)
+    async def _send_message(self, group: str, admin: int, user: int, text: str, **kwargs) -> None:
+        message_id = await self.service.send_raw(admin, text, **kwargs)
+        self.student_db.cursor.execute("""
+            INSERT INTO verification_messages ("group", "admin", "user", "message")
+            VALUES (%s, %s, %s, %s)
+        """, (group, admin, user, message_id))
+        self.student_db.update_db()
 
     async def verify(self, client: Client, verifier: Client) -> None:
         self.logger.info(f"StudentBotService: Verified user {client.real_name} [{client.id}] to {client.group}")
@@ -363,15 +361,23 @@ class Verification:
         await self._admins_edit_message(client, discarded_admin_text)
 
     async def _admins_edit_message(self, client: Client, text: str):
-        for admin in self._messages[client.group]:
+        for admin, user, message in self.get_admin_messages_from_group(client.group):
             try:
                 await self.service.app.bot.edit_message_text(
                     chat_id=admin,
-                    message_id=self._messages[client.group][admin][client.id],
+                    message_id=message,
                     text=text
                 )
             except telegram.error.BadRequest:
                 pass
+
+    def get_admin_messages_from_group(self, group: str) -> list[tuple[int, int, int]]:
+        self.student_db.cursor.execute("""
+            SELECT "admin", "user", "message" FROM verification_messages
+            WHERE "group" = %s
+        """, (group,))
+
+        return self.student_db.cursor.fetchall()
     
     def get_client_from_verification_message(self, message: telegram.Message):
         user_id = int(re.search(r"\[(\d+)\]", message.text).group(1))
@@ -381,7 +387,7 @@ class Verification:
 
 class ScheduleDB:
     def __init__(self, stud_bot):
-        self.connection = psycopg2.connect(**load_db_config())
+        self.connection = psycopg2.connect(**load_students_db())
         self.cursor = self.connection.cursor()
         self.stud_bot = stud_bot
         self.student_db = self.stud_bot.student_db
@@ -446,53 +452,6 @@ class ScheduleDB:
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
-class MaterialDB:
-    def __init__(self, stud_bot):
-        self.connection = psycopg2.connect(**load_materials_db())
-        self.cursor = self.connection.cursor()
-        self.stud_bot = stud_bot
-        self.student_db = self.stud_bot.student_db
-
-    def get_disciplines(self):
-        conn = psycopg2.connect(**load_materials_db())
-        cur = conn.cursor()
-
-        cur.execute("SELECT DISTINCT discipline_name FROM materials")
-        disciplines = cur.fetchall()
-
-        cur.close()
-        conn.close()
-
-        return disciplines
-
-    def get_materials(self, discipline: str) -> list:
-        query = """
-        SELECT material_name, url
-        FROM materials
-        WHERE discipline_name = %s
-        """
-
-        self.cursor.execute(query, (discipline, ))
-        materials = self.cursor.fetchall()
-
-        return materials
-    
-    def send_material(self, user_id: int, discipline_name: str, service: 'StudentBotService') -> None:
-        materials = self.get_materials(discipline_name)
-
-        if materials:
-            materials_text = f"Material from {discipline_name}:\n\n"
-            for material in materials:
-                materials_text += f"{material[0]}: {material[1]}\n"
-        else:
-            materials_text = f"No subject materials available {discipline_name}."
-
-        # Отправка пользователю
-        self.stud_bot.send(user_id, materials_text)
-    
-    def close(self):
-        self.cursor.close()
-        self.connection.close()
 
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
@@ -501,9 +460,9 @@ class StudentBotService:
 
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
-        self.verification = Verification(self)
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
+        self.verification = Verification(self, self.student_db)
         self.material_db = MaterialDB(self)
 
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
@@ -548,8 +507,9 @@ class StudentBotService:
 
     async def self_promote(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
-        for group in self.groups:
-            self.admins.add_admin(group, update.effective_user.id)
+        self.admins.add_admin(update.effective_user.id)
+        # for group in self.groups:
+        #     self.admins.add_admin(group, update.effective_user.id)
 
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
@@ -715,28 +675,16 @@ class Menu:
         await service.send(update.effective_user.id, "<Options>")
 
     @staticmethod
-    async def materials_menu(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
-        user = service.student_db.get_student(update.effective_user.id)
-        user = service.student_db.get_student(update.effective_user.id)
-        disciplines = service.material_db.get_disciplines()
-
-        keyboard = [[InlineKeyboardButton(d[0], callback_data=f"discipline_{d[0]}")] for d in disciplines]
-        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-
-        await service.send(user.id, "Chose discipline:", reply_markup=reply_markup)
- 
-    @staticmethod
     async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         user = service.student_db.get_student(update.effective_user.id)
 
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Schedule", callback_data="schedule")],
-            [InlineKeyboardButton("Materials", callback_data="discipline")],
+            [InlineKeyboardButton("Materials", callback_data="materials")],
             [InlineKeyboardButton("Debts", callback_data="debts")],
             [InlineKeyboardButton("Options", callback_data="options")],
         ])
         await service.send(user.id, f"Hello, {user.real_name}", reply_markup=reply_markup)
-
 
 
 class Button:
@@ -862,21 +810,6 @@ class Button:
         query = update.callback_query
         await query.answer()
         await Menu.main_menu(service, update, context)
-
-    @staticmethod
-    async def discipline(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        await query.answer()
-        await Menu.materials_menu(service, update, context)
-
-    @staticmethod
-    async def materials(service: 'StudentBotService', update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user = service.student_db.get_student(update.effective_user.id)
-
-        discipline_name = query.data.split('_', 1)[1]
-
-        await service.material_db.send_material(user.id, discipline_name, service)
     
     @staticmethod
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
