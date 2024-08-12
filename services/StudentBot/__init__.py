@@ -43,6 +43,7 @@ class Client:
     _main_message: int | None = None
     _main_message_first: bool = True
     _options: dict[str, Any] = None
+    _is_admin: bool = False
     student_db: Any = None
     
     @property
@@ -156,6 +157,10 @@ class Client:
     def options(self, options: dict[str, Any]) -> None:
         self._options = options
 
+    @property
+    def is_admin(self) -> bool:
+        return self._is_admin
+
 
 class Admins:
     def __init__(self, service) -> None:
@@ -190,11 +195,11 @@ class StudentDB:
 
     def add_student(self, id: int) -> Client:
         query = """
-        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first, is_admin)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
 
-        self.cursor.execute(query, (id, False, None, None, False, None, True))
+        self.cursor.execute(query, (id, False, None, None, False, None, True, False))
         self.connection.commit()
 
         student = Client(id, student_db=self)
@@ -230,7 +235,8 @@ class StudentDB:
                          _is_inputting_name = student_info[4],
                          _main_message = student_info[5],
                          _main_message_first = student_info[6],
-                         student_db = self) 
+                         _is_admin=student_info[7],
+                         student_db = self)
         
         return student
 
