@@ -1,6 +1,7 @@
+from copy import copy
 import datetime
 from typing import Any
-from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config
+from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_debts_db_config
 from telegram.ext import ApplicationBuilder, CommandHandler
 import telegram
 import asyncio
@@ -39,7 +40,7 @@ class Client:
     _verified: bool = False
     _real_name: str | None = None
     _group: str | None = None
-    _is_inputting_name: bool = False
+    _is_inputting: bool = False
     _main_message: int | None = None
     _main_message_first: bool = True
     _options: dict[str, Any] = None
@@ -75,7 +76,7 @@ class Client:
         query = """
         UPDATE students
         SET real_name = %s
-        WHERE id = %s;  
+        WHERE id = %s;
         """
 
         self.student_db.cursor.execute(query, (real_name, self.id))
@@ -99,19 +100,19 @@ class Client:
         self.student_db.update_db()
 
     @property
-    def is_inputting_name(self) -> bool:
-        return self._is_inputting_name
+    def is_inputting(self) -> bool:
+        return self._is_inputting
     
-    @is_inputting_name.setter
-    def is_inputting_name(self, is_inputting_name: bool) -> None:
+    @is_inputting.setter
+    def is_inputting(self, is_inputting: bool) -> None:
         query = """
         UPDATE students
         SET is_inputting_name = %s
         WHERE id = %s;
         """
 
-        self.student_db.cursor.execute(query, (is_inputting_name, self.id))
-        self._is_inputting_name = is_inputting_name
+        self.student_db.cursor.execute(query, (is_inputting, self.id))
+        self._is_inputting = is_inputting
 
         self.student_db.update_db()
 
@@ -232,13 +233,26 @@ class StudentDB:
                          _verified = student_info[1],
                          _real_name = student_info[2],
                          _group = student_info[3],
-                         _is_inputting_name = student_info[4],
+                         _is_inputting = student_info[4],
                          _main_message = student_info[5],
                          _main_message_first = student_info[6],
                          _is_admin=student_info[7],
                          student_db = self)
         
         return student
+    
+    def get_students_of_group(self, group: str) -> list[str]:
+        query = """
+        SELECT id FROM students
+        WHERE "group" = %s
+        """
+
+        self.cursor.execute(query, (group, ))
+        students = self.cursor.fetchall()
+
+        if students is None:
+            return []
+        return [student[0] for student in students]
 
     def student_exist(self, id: int) -> bool:
         return bool(self.get_student(id))
@@ -420,6 +434,74 @@ class ScheduleDB:
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
 
+@dataclass
+class Debt:
+    subject: str
+    text: str
+    due_to_date: str
+    user: int | None = None
+    done: bool = False
+
+
+class DebtsDB:
+    def __init__(self, service) -> None:
+        self.connection = psycopg2.connect(**load_debts_db_config())
+        self.cursor = self.connection.cursor()
+        self.service = service
+
+    def add_debt(self, debt: Debt, group: str):
+        students = self.service.student_db.get_students_of_group(group)
+
+        for student_id in students:
+            new_debt = copy(debt)
+            new_debt.user = student_id
+
+            self._add_debt(new_debt)
+
+        self.connection.commit()
+
+    def _add_debt(self, debt: Debt):
+        self.cursor.execute("""
+            INSERT INTO debts (due_to_date, subject, text, "user", done)
+            VALUES (%s, %s, %s, %s, false)
+        """, (debt.due_to_date, debt.subject, debt.text, debt.user))
+        
+    def get_debts(self, user_id: int) -> list[Debt]:
+        self.cursor.execute("""
+            SELECT subject, text, due_to_date, done
+            FROM debts
+            WHERE "user" = %s
+            ORDER BY due_to_date ASC
+        """, (user_id,))
+
+        debts = self.cursor.fetchall()
+        return [Debt(debt[0], debt[1], debt[2], user_id, debt[3]) for debt in debts]
+
+    def build_debts_message_text(self, debts: list[Debt]) -> str:
+        debts_str = ""
+
+        if not debts:
+            return "Clear"
+
+        for i, debt in enumerate(debts):
+            new_line = f"{i+1}. {debt.due_to_date}: {debt.subject}, {debt.text}"
+            new_line = new_line.replace("~", "\\~").replace("-", "\\-").replace(".", "\\.")
+            if debt.done:
+                new_line = f"~{new_line}~"
+
+            debts_str += new_line + "\n"
+
+        return debts_str
+    
+    def mark_as_done(self, debt: Debt) -> None:
+        self.cursor.execute("""
+            UPDATE debts
+            SET done = true
+            WHERE subject = %s AND text = %s AND due_to_date = %s AND "user" = %s
+        """, (debt.subject, debt.text, debt.due_to_date, debt.user))
+        self.connection.commit()
+
+
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
@@ -428,6 +510,7 @@ class StudentBotService:
         self.admins = Admins(self)
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
+        self.debts_db = DebtsDB(self)
         self.verification = Verification(self, self.student_db)
 
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
@@ -521,18 +604,24 @@ class StudentBotService:
         return name, args
 
     async def text_controller(self, update: telegram.Update, context: CallbackContext) -> int:
+        if "run_input_on" not in context.chat_data:
+            self.logger.error(f"StudentBotService: Error in text_controller. No effective functions have been specified | {update.effective_user.name} | {update.message.to_json()}")
+            return telegram.ext.ConversationHandler.END
+        
+        effective_function = eval(context.chat_data["run_input_on"])
+
         user = update.effective_user
         client = self.student_db.get_student(user.id)
 
-        if client is None or not client.is_inputting_name:
+        if client is None or not client.is_inputting:
             await update.message.delete()
             return telegram.ext.ConversationHandler.END
 
-        client.real_name = update.message.text
-        client.is_inputting_name = False
+        user_input = update.message.text
+        client.is_inputting = False
         await update.message.delete()
 
-        await Menu.confirmation_menu(self, client)
+        await effective_function(self, update, context, user_input)
         
         return telegram.ext.ConversationHandler.END
 
@@ -644,10 +733,14 @@ class Menu:
         query = update.callback_query
         await service.send(update.effective_user.id, "Enter your full name:")
         client = service.student_db.get_student(query.from_user.id)
-        client.is_inputting_name = True
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.confirmation_menu"
         
     @staticmethod
-    async def confirmation_menu(service: StudentBotService, client: Client) -> None:
+    async def confirmation_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, usr_name: str) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        client.real_name = usr_name
+
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Send for confirmation", callback_data="confirm")],
             [InlineKeyboardButton("Try again", callback_data="restart")],
@@ -696,6 +789,73 @@ class Menu:
             [InlineKeyboardButton("Options", callback_data="options")],
         ])
         await service.send(user.id, f"Hello, {user.real_name}", reply_markup=reply_markup)
+
+    @staticmethod
+    async def debts_admin_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("My debts", callback_data="debts_list")],
+            [InlineKeyboardButton("Add debt", callback_data="add_debt")],
+            [InlineKeyboardButton("Back to menu", callback_data="menu")],
+        ])
+
+        await service.send(update.effective_user.id, "Debts", reply_markup=reply_markup)
+
+    @staticmethod
+    async def debts_list_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        debts = service.debts_db.get_debts(update.effective_user.id)
+        context.chat_data["debts"] = debts
+        text = service.debts_db.build_debts_message_text(debts)
+
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Mark as done", callback_data="debts_mark_as_done")],
+            [InlineKeyboardButton("Back to menu", callback_data="menu")],
+        ])
+
+        await service.send(update.effective_user.id, text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
+    @staticmethod
+    async def confirm_new_debt_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, usr_input: str) -> None:
+        subject, text, date = Menu._parse_debt_input(usr_input)
+        context.chat_data["debt_subject"] = subject
+        context.chat_data["debt_text"] = text
+        context.chat_data["debt_date"] = date
+
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Yes", callback_data="confirm_new_debt")],
+            [InlineKeyboardButton("No", callback_data="back_to_menu_with_message(Adding debt aborted)")],
+        ])
+
+        await service.send(update.effective_user.id,
+                           f"Subject: {subject}\nText: {text}\nDate: {date}\nCorrect?",
+                           reply_markup=reply_markup)
+        
+    @staticmethod
+    def _parse_debt_input(usr_input: str) -> Debt:
+        subject, other = usr_input.split(":")
+        text, date = other.split("|")
+        return subject.strip(), text.strip(), date.strip()
+
+    @staticmethod
+    async def mark_as_done_confirm_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, usr_input: str) -> None:
+        debts = context.chat_data["debts"]
+        try:
+            index = int(usr_input)
+            if index < 1:
+                raise IndexError("Too low")
+            
+            debt = debts[index - 1]
+        except (ValueError, IndexError):
+            return await Menu._incorrect_debt_index_menu(service, update.effective_user.id)
+
+        service.debts_db.mark_as_done(debt)
+        await Menu.debts_list_menu(service, update, context)
+
+    @staticmethod
+    async def _incorrect_debt_index_menu(service: StudentBotService, client_id: int) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Back to menu", callback_data="menu")]
+        ])
+        await service.send(client_id, "Incorrect index", reply_markup=reply_markup)
 
 
 class Button:
@@ -791,4 +951,62 @@ class Button:
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await query.answer()
-        await service.send(update.effective_user.id, "<Debts>")
+        client = service.student_db.get_student(query.from_user.id)
+        
+        if client.is_admin:
+            return await Menu.debts_admin_menu(service, update, context)
+
+        return await Menu.debts_list_menu(service, update, context)
+
+    @staticmethod
+    async def debts_list(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        await Menu.debts_list_menu(service, update, context)
+
+    @staticmethod
+    async def add_debt(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        client = service.student_db.get_student(query.from_user.id)
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu"
+
+        await service.send(update.effective_user.id, "Enter <subject>: <text> | <day>/<month>/<year>")
+
+    @staticmethod
+    async def confirm_new_debt(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        # DONT NEED query.answer since its done
+        # in back_to_menu_with_message later
+
+        client = service.student_db.get_student(query.from_user.id)
+
+        subject = context.chat_data["debt_subject"]
+        text = context.chat_data["debt_text"]
+        due_to_date = context.chat_data["debt_date"]
+        debt = Debt(subject, text, due_to_date)
+
+        service.debts_db.add_debt(debt, client.group)
+        await Button.back_to_menu_with_message(service, update, context, "Debt added")
+
+    @staticmethod
+    async def back_to_menu_with_message(service: StudentBotService, update: telegram.Update, context: CallbackContext, message: str) -> None:
+        query = update.callback_query
+        await query.answer()
+        
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Back to menu", callback_data="menu")]
+        ])
+
+        await service.send(update.effective_user.id, message, reply_markup=reply_markup)
+
+    @staticmethod
+    async def debts_mark_as_done(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        client = service.student_db.get_student(query.from_user.id)
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
+
+        await service.send(update.effective_user.id, "Enter index:")

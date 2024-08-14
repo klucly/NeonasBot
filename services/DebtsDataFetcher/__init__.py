@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from service_setup import SetupServiceData, load_schedule_db_config
+from service_setup import SetupServiceData, load_debts_db_config
 from time import perf_counter
 from typing import Iterator
 from google.oauth2 import service_account
@@ -42,7 +42,7 @@ def parse_range(data: list[list[str]], week=1) -> Iterator[LINE]:
             yield parsed_line
 
 
-class ScheduleDataFetcherService:
+class DebtsDataFetcherService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.setup_data = setup_data
 
@@ -50,16 +50,16 @@ class ScheduleDataFetcherService:
         self.setup_db_connection()
 
     def setup_google_api_connection(self) -> None:
-        self.spreadsheet_id = "1gsxm1onrT76UYZxuT7b-qyO-haWiWk7igKwvSB0LLbg"
+        self.spreadsheet_id = "1h0rK_RdtxMCxMQWuNX9z2zGourXa_CpUhuCh7IlL2Gc"
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
         self.load_creds(scopes)
 
         self.url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values:batchGet"
         self.params = {
             "ranges": [
-                "KM31!A3:E32", "KM31!G3:K32",
-                "KM32!A3:E32", "KM32!G3:K32",
-                "KM33!A3:E32", "KM33!G3:K32",
+                "KM31!B:D",
+                "KM32!B:D",
+                "KM33!B:D",
             ]
         }
         self.headers = {
@@ -78,53 +78,48 @@ class ScheduleDataFetcherService:
      
     def setup_db_connection(self) -> None:
         self.db_connection = psycopg2.connect(
-            **load_schedule_db_config()
+            **load_debts_db_config()
         )
 
         self.db_cursor = self.db_connection.cursor()
 
     async def run(self) -> None:
-        self.setup_data.logger.info("Schedule data fetcher service: Starting")
+        self.setup_data.logger.info("Debts data fetcher service: Starting")
         
         try:
             while True:
                 await self.mainloop()
         except Exception as e:
-            self.setup_data.logger.exception(f"Schedule data fetcher service: {e}")
+            self.setup_data.logger.exception(f"Debts data fetcher service: {e}")
 
     async def mainloop(self) -> None:
         time_before_parsing = perf_counter()
 
-        self.db_cursor.execute("DELETE FROM km31")
-        self.db_cursor.execute("DELETE FROM km32")
-        self.db_cursor.execute("DELETE FROM km33")
+        self.db_cursor.execute("DELETE FROM debts")
         
-        self.setup_data.logger.info("Schedule data fetcher service: Fetching data")
+        self.setup_data.logger.info("Debts data fetcher service: Fetching data")
         info = await self.fetch_data()
-        self.setup_data.logger.info("Schedule data fetcher service: Parsing data")
+        self.setup_data.logger.info("Debts data fetcher service: Parsing data")
         self.parse_to_db(info)
         self.db_connection.commit()
 
-        self.setup_data.logger.info(f"Schedule data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
+        self.setup_data.logger.info(f"Debts data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
 
         await asyncio.sleep(5*60)
 
     def parse_to_db(self, info) -> None:
-        for group_number, group in enumerate(("km31", "km32", "km33")):
-            for week in (1, 2):
-                batch_id = group_number*2 + week-1
-                data = info["valueRanges"][batch_id]["values"]
+        for group, group_name in enumerate(("km31", "km32", "km33")):
+            data = info["valueRanges"][group]["values"]
 
-                for line in parse_range(data, week=week):
-                    self.insert_data(group, line)
+            for line in parse_range(data):
+                self.insert_data(group_name, line)
 
     def insert_data(self, group: str, line: LINE) -> None:
-        query = f"""
-        INSERT INTO {group} (day_of_week, time, subject, class_type, week, url)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        query = """
+        INSERT INTO debts (due_to_date, subject, text, user, done)
+        VALUES (%s, %s, %s, %s, %s)
         """
         self.db_cursor.execute(query, line)
-        pass
 
     async def fetch_data(self):
         async with httpx.AsyncClient() as client:

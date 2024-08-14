@@ -38,3 +38,11 @@ def load_schedule_db_config(filename='./data/StudentBot/schedule_db_config.json'
     
     with open(filename, 'r') as file:
         return json.load(file)
+
+
+def load_debts_db_config(filename='./data/StudentBot/debts_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["debtsdbconfig"])
+    
+    with open(filename, 'r') as file:
+        return json.load(file)
