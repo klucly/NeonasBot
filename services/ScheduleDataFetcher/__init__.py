@@ -70,10 +70,10 @@ class ScheduleDataFetcherService:
     def load_creds(self, scopes) -> None:
         if "useenv" in os.environ and os.environ["useenv"] == "true":
             self.credentials = \
-                service_account.Credentials.from_service_account_info(json.loads(os.environ["schedulefileapicreds"]), scopes=scopes)
+                service_account.Credentials.from_service_account_info(json.loads(os.environ["googleapicreds"]), scopes=scopes)
         else:
             self.credentials = \
-                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/schedule_file_api_creds.json", scopes=scopes)
+                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/google_api_creds.json", scopes=scopes)
 
         self.credentials.refresh(Request())
      
@@ -86,13 +86,13 @@ class ScheduleDataFetcherService:
         self.db_cursor = self.db_connection.cursor()
 
     async def run(self) -> None:
-        self.setup_data.logger.info("Data fetcher service: Starting")
+        self.setup_data.logger.info("Schedule data fetcher service: Starting")
         
         try:
             while True:
                 await self.mainloop()
         except Exception as e:
-            self.setup_data.logger.exception(f"Data fetcher service: {e}")
+            self.setup_data.logger.exception(f"Schedule data fetcher service: {e}")
 
     async def mainloop(self) -> None:
         time_before_parsing = perf_counter()
@@ -101,13 +101,13 @@ class ScheduleDataFetcherService:
         self.db_cursor.execute("DELETE FROM km32")
         self.db_cursor.execute("DELETE FROM km33")
         
-        self.setup_data.logger.info("Data fetcher service: Fetching data")
+        self.setup_data.logger.info("Schedule data fetcher service: Fetching data")
         info = await self.fetch_data()
-        self.setup_data.logger.info("Data fetcher service: Parsing data")
+        self.setup_data.logger.info("Schedule data fetcher service: Parsing data")
         self.parse_to_db(info)
         self.db_connection.commit()
 
-        self.setup_data.logger.info(f"Data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
+        self.setup_data.logger.info(f"Schedule data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
 
         await asyncio.sleep(2*60)
 
