@@ -471,6 +471,7 @@ class MaterialDB:
         except Exception as e:
             print(f"Error sending material: {e}")
 
+
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
