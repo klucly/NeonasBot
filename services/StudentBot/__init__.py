@@ -546,10 +546,10 @@ class MaterialDB:
             material_name = row[0]
             url = row[1]
 
-            material_info += f"[{material_name}] ({url})\n\n"
+            material_info += f"[{material_name}]({url})\n\n"
 
         try:
-            await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}")
+            await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
         except Exception as e:
             print(f"Error sending material: {e}")
 
@@ -1001,12 +1001,6 @@ class Button:
         query = update.callback_query
         await query.answer()
         await Menu.main_menu(service, update, context)
-
-    @staticmethod
-    async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        await query.answer()
-        await service.send(update.effective_user.id, "<Materials>")
     
     @staticmethod
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1071,3 +1065,31 @@ class Button:
         context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
 
         await service.send(update.effective_user.id, "Enter index:")
+
+    @staticmethod
+    async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext):
+        client = service.student_db.get_student(update.effective_user.id)
+        query = update.callback_query
+        user_id = query.from_user.id
+
+
+        if client.is_admin:
+            await Menu.admin_material_menu(service, update, context)
+            return
+        
+        await service.material_db.send_material(update, user_id, context)
+
+    @staticmethod
+    async def view_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await service.material_db.send_material(update, user_id, context)
+
+    @staticmethod
+    async def send_link_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        text = "[Таблиця з матеріалами](https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859)"
+        await service.send(user_id, text, parse_mode="MARKDOWN")

@@ -73,11 +73,7 @@ class ScheduleDataFetcherService:
                 service_account.Credentials.from_service_account_info(json.loads(os.environ["googleapicreds"]), scopes=scopes)
         else:
             self.credentials = \
-<<<<<<< HEAD
-                service_account.Credentials.from_service_account_file("./data/StudentBot/google_api_creds.json", scopes=scopes)
-=======
-                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/schedule_file_api_creds.json", scopes=scopes)
->>>>>>> c6560bf49d345b2f83bca5d29ebde0dcab8f4b0c
+                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/google_api_creds.json", scopes=scopes)
 
         self.credentials.refresh(Request())
      
