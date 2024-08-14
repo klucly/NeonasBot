@@ -1,86 +1,83 @@
 import asyncio
 import json
 import os
-from service_setup import SetupServiceData, load_schedule_db_config
+from service_setup import SetupServiceData, load_material_db_config
 from time import perf_counter
 from typing import Iterator
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 import psycopg2
 import httpx
+from typing import Optional, Tuple
 
 
-LINE = tuple[str, str, str, str, str, str]
+LINE = Tuple[Optional[str], Optional[str]]
 
 
-def parse_line(line: list[str], current_day_of_week: list[str], week=1) -> LINE | None:
-    if len(line) == 1:
-        if line[0]:
-            current_day_of_week[0] = line[0]
-    if len(line) != 5:
-        return
+def parse_line(line: list[str]) -> LINE | None:
+    
+    material_name = None
+    url = None
 
-    possible_day_of_week, time, subject, class_type, url = line
-    if not time or not subject or not class_type or not url:
-        return
+    if len(line) > 0:
+        material_name = line[0]
 
-    if possible_day_of_week:
-        current_day_of_week[0] = possible_day_of_week
+    if len(line) > 1:
+        url = line[1]
 
-    return current_day_of_week[0], time, subject, class_type, week, url
+    return material_name, url
 
 
-def parse_range(data: list[list[str]], week=1) -> Iterator[LINE]:
-    current_day_of_week = [""]
+def parse_range(data) -> Iterator[LINE]:
 
     for line in data:
         line: list[str]
 
-        parsed_line = parse_line(line, current_day_of_week, week)
+        parsed_line = parse_line(line)
 
         if parsed_line is not None:
             yield parsed_line
 
 
-class ScheduleDataFetcherService:
+class MaterialsDataFetcherService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.setup_data = setup_data
 
         self.setup_google_api_connection()
         self.setup_db_connection()
 
-    def setup_google_api_connection(self) -> None:
-        self.spreadsheet_id = "1gsxm1onrT76UYZxuT7b-qyO-haWiWk7igKwvSB0LLbg"
-        
+
+    def setup_google_api_connection(self):
+        self.spreadsheet_id = "1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc"
+
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
         self.load_creds(scopes)
 
         self.url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values:batchGet"
         self.params = {
-            "ranges": [
-                "KM31!A3:E32", "KM31!G3:K32",
-                "KM32!A3:E32", "KM32!G3:K32",
-                "KM33!A3:E32", "KM33!G3:K32",
+            "ranges" : [
+                "KM31!B3:C15",
+                "KM32!B3:C15",
+                "KM33!B3:C15"
             ]
         }
         self.headers = {
             "Authorization": f"Bearer {self.credentials.token}"
         }
 
-    def load_creds(self, scopes) -> None:
+    def load_creds(self, scopes):
         if "useenv" in os.environ and os.environ["useenv"] == "true":
             self.credentials = \
-                service_account.Credentials.from_service_account_info(json.loads(os.environ["schedulefileapicreds"]), scopes=scopes)
+                service_account.Credentials.from_service_account_info(json.loads(os.environ["materialfileapicreds"]), scopes=scopes)
         else:
             self.credentials = \
-                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/schedule_file_api_creds.json", scopes=scopes)
+                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/materials_file_api_creds.json", scopes=scopes)
 
         self.credentials.refresh(Request())
-     
-    # TODO confidential data 
+
     def setup_db_connection(self) -> None:
         self.db_connection = psycopg2.connect(
-            **load_schedule_db_config()
+            **load_material_db_config()
         )
 
         self.db_cursor = self.db_connection.cursor()
@@ -97,9 +94,7 @@ class ScheduleDataFetcherService:
     async def mainloop(self) -> None:
         time_before_parsing = perf_counter()
 
-        self.db_cursor.execute("DELETE FROM km31")
-        self.db_cursor.execute("DELETE FROM km32")
-        self.db_cursor.execute("DELETE FROM km33")
+        self.db_cursor.execute("DELETE FROM materials_km3x")
         
         self.setup_data.logger.info("Data fetcher service: Fetching data")
         info = await self.fetch_data()
@@ -113,19 +108,17 @@ class ScheduleDataFetcherService:
 
     def parse_to_db(self, info) -> None:
         for group_number, group in enumerate(("km31", "km32", "km33")):
-            for week in (1, 2):
-                batch_id = group_number*2 + week-1
-                data = info["valueRanges"][batch_id]["values"]
+            data = info["valueRanges"][group_number]["values"]
+            for line in parse_range(data):
+                self.insert_data(group, line)
 
-                for line in parse_range(data, week=week):
-                    self.insert_data(group, line)
 
     def insert_data(self, group: str, line: LINE) -> None:
         query = f"""
-        INSERT INTO {group} (day_of_week, time, subject, class_type, week, url)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO materials_km3x ("group", material_name, url)
+        VALUES (%s, %s, %s)
         """
-        self.db_cursor.execute(query, line)
+        self.db_cursor.execute(query, (group, *line))
         pass
 
     async def fetch_data(self):

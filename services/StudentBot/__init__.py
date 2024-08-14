@@ -456,7 +456,7 @@ class MaterialDB:
         material = self.get_material(client.group)
 
         if not material:
-            self.stud_bot.send(user.id, f"No material found for {client.group}.")
+            self.stud_bot.send(user.id, f"Немає матеріалів для  {client.group}.")
             return
 
         material_info = ""
@@ -464,64 +464,12 @@ class MaterialDB:
             material_name = row[0]
             url = row[1]
 
-            material_info += f"{material_name} [{url}]\n\n"
+            material_info += f"[{material_name}] ({url})\n\n"
 
         try:
-            await self.stud_bot.send(user.id, f"Material for {client.group}:\n{material_info}")
+            await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}")
         except Exception as e:
             print(f"Error sending material: {e}")
-
-    def add_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
-
-        material_name = context.chat_data["material_name"]
-        url = context.chat_data["material_url"]
-
-        conn = psycopg2.connect(**load_material_db_config())
-        cur = conn.cursor()
-
-        query = f"""
-            INSERT INTO materials_km3x ("group", material_name, url)
-            VALUES ({client.group}, {material_name}, {url});
-            """
-
-        try:
-            cur.execute(query,)
-            conn.commit()
-        except Exception as e:
-            print(f"Database error: {e}")
-        finally:
-            cur.close()
-            conn.close()
-
-        self.stud_bot.send(user.id, f"Material added for {client.group}:\n{material_name} [{url}]")
-
-    def delete_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
-
-        material_name = context.chat_data["material_name"]
-        url = context.chat_data["material_url"]
-
-        conn = psycopg2.connect(**load_material_db_config())
-        cur = conn.cursor()
-
-        query = f"""
-            DELETE FROM materials_km3x
-            WHERE "group" = '{client.group}' AND material_name = '{material_name}' AND url = '{url}';
-            """
-
-        try:
-            cur.execute(query,)
-            conn.commit()
-        except Exception as e:
-            print(f"Database error: {e}")
-        finally:
-            cur.close()
-            conn.close()
-
-        self.stud_bot.send(user.id, f"Material deleted for {client.group}:\n{material_name} [{url}]")
 
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
@@ -803,12 +751,11 @@ class Menu:
     @staticmethod
     async def admin_material_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Add material", callback_data="add_material")],
-            [InlineKeyboardButton("Delete material", callback_data="delete_material")],
-            [InlineKeyboardButton("View material", callback_data="view_material")],
-            [InlineKeyboardButton("Back", callback_data="restart")],
+            [InlineKeyboardButton("Google sheet link", url="https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859")],
+            [InlineKeyboardButton("Подивитися матеріали", callback_data="view_material")],
+            [InlineKeyboardButton("Назад", callback_data="restart")],
         ])
-        await service.send(update.effective_user.id, "Choose an option:", reply_markup=reply_markup)
+        await service.send(update.effective_user.id, "Оберіть опцію:", reply_markup=reply_markup)
 
 
 class Button:
@@ -908,25 +855,20 @@ class Button:
         await service.material_db.send_material(update, user_id, context)
 
     @staticmethod
-    async def add_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        service.material_db.add_material(update, user_id, context)
-        
-    @staticmethod
-    async def delete_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        user_id = query.from_user.id
-        await query.answer()
-        service.material_db.delete_material(update, user_id, context)
-
-    @staticmethod
     async def view_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        service.material_db.send_material(update, user_id, context)
+        await service.material_db.send_material(update, user_id, context)
+
+    @staticmethod
+    async def send_link_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        text = "[Таблиця з матеріалами](https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859)"
+        await service.send(user_id, text, parse_mode="MARKDOWN")
+
 
     @staticmethod
     async def debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
