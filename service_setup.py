@@ -24,7 +24,7 @@ def get_token(id_: str):
         return _clear_unwanted_characters(json.load(f)[id_])
 
 
-def load_student_db_config(filename='./data/StudentBot/stud_db_config.json') -> dict[str, str]:
+def load_student_db_config(filename='./data/StudentBot/configs/stud_db_config.json') -> dict[str, str]:
     if "useenv" in os.environ and os.environ["useenv"] == "true":
         return json.loads(os.environ["studdbconfig"])
     
@@ -32,17 +32,25 @@ def load_student_db_config(filename='./data/StudentBot/stud_db_config.json') -> 
         return json.load(file)
 
 
-def load_schedule_db_config(filename='./data/StudentBot/schedule_db_config.json') -> dict[str, str]:
+def load_schedule_db_config(filename='./data/StudentBot/configs/schedule_db_config.json') -> dict[str, str]:
     if "useenv" in os.environ and os.environ["useenv"] == "true":
         return json.loads(os.environ["scheduledbconfig"])
     
     with open(filename, 'r') as file:
         return json.load(file)
+<<<<<<< HEAD
 
 
 def load_debts_db_config(filename='./data/StudentBot/debts_db_config.json') -> dict[str, str]:
     if "useenv" in os.environ and os.environ["useenv"] == "true":
         return json.loads(os.environ["debtsdbconfig"])
+=======
+    
+
+def load_material_db_config(filename='./data/StudentBot/configs/materials_db_config.json') -> dict[str, str]:
+    if "useenv" in os.environ and os.environ["useenv"] == "true":
+        return json.loads(os.environ["materialconfig"])
+>>>>>>> c6560bf49d345b2f83bca5d29ebde0dcab8f4b0c
     
     with open(filename, 'r') as file:
         return json.load(file)

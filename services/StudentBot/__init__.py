@@ -1,7 +1,7 @@
 from copy import copy
 import datetime
 from typing import Any
-from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_debts_db_config
+from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_material_db_config, load_debts_db_config
 from telegram.ext import ApplicationBuilder, CommandHandler
 import telegram
 import asyncio
@@ -44,7 +44,7 @@ class Client:
     _main_message: int | None = None
     _main_message_first: bool = True
     _options: dict[str, Any] = None
-    _is_admin: bool = False
+    _is_admin: bool = True
     student_db: Any = None
     
     @property
@@ -502,6 +502,58 @@ class DebtsDB:
         self.connection.commit()
 
 
+class MaterialDB:
+    def __init__(self, stud_bot):
+        self.connection = psycopg2.connect(**load_student_db_config())
+        self.cursor = self.connection.cursor()
+        self.stud_bot = stud_bot
+        self.student_db = self.stud_bot.student_db
+
+    def get_material(self, group_name: str) -> list:
+        conn = psycopg2.connect(**load_material_db_config())
+        cur = conn.cursor()
+
+        query = f"""
+            SELECT material_name, url
+            FROM materials_km3x
+            WHERE "group" = '{group_name}';
+            """
+
+        try:
+            cur.execute(query,)
+            rows = cur.fetchall()
+        except Exception as e:
+            print(f"Database error: {e}")
+            rows = []
+        finally:
+            cur.close()
+            conn.close()
+
+        return rows
+    
+    async def send_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+
+        material = self.get_material(client.group)
+
+        if not material:
+            self.stud_bot.send(user.id, f"Немає матеріалів для  {client.group}.")
+            return
+
+        material_info = ""
+        for row in material:
+            material_name = row[0]
+            url = row[1]
+
+            material_info += f"[{material_name}] ({url})\n\n"
+
+        try:
+            await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}")
+        except Exception as e:
+            print(f"Error sending material: {e}")
+
+
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
@@ -511,8 +563,8 @@ class StudentBotService:
         self.student_db = StudentDB()
         self.schedule_db = ScheduleDB(self)
         self.debts_db = DebtsDB(self)
+        self.material_db = MaterialDB(self)
         self.verification = Verification(self, self.student_db)
-
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
     
     async def run(self) -> None:
@@ -856,6 +908,15 @@ class Menu:
             [InlineKeyboardButton("Back to menu", callback_data="menu")]
         ])
         await service.send(client_id, "Incorrect index", reply_markup=reply_markup)
+
+    @staticmethod
+    async def admin_material_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Google sheet link", url="https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859")],
+            [InlineKeyboardButton("Подивитися матеріали", callback_data="view_material")],
+            [InlineKeyboardButton("Назад", callback_data="restart")],
+        ])
+        await service.send(update.effective_user.id, "Оберіть опцію:", reply_markup=reply_markup)
 
 
 class Button:

@@ -51,6 +51,7 @@ class ScheduleDataFetcherService:
 
     def setup_google_api_connection(self) -> None:
         self.spreadsheet_id = "1gsxm1onrT76UYZxuT7b-qyO-haWiWk7igKwvSB0LLbg"
+        
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
         self.load_creds(scopes)
 
@@ -72,10 +73,15 @@ class ScheduleDataFetcherService:
                 service_account.Credentials.from_service_account_info(json.loads(os.environ["googleapicreds"]), scopes=scopes)
         else:
             self.credentials = \
+<<<<<<< HEAD
                 service_account.Credentials.from_service_account_file("./data/StudentBot/google_api_creds.json", scopes=scopes)
+=======
+                service_account.Credentials.from_service_account_file("./data/StudentBot/configs/schedule_file_api_creds.json", scopes=scopes)
+>>>>>>> c6560bf49d345b2f83bca5d29ebde0dcab8f4b0c
 
         self.credentials.refresh(Request())
      
+    # TODO confidential data 
     def setup_db_connection(self) -> None:
         self.db_connection = psycopg2.connect(
             **load_schedule_db_config()
@@ -107,7 +113,7 @@ class ScheduleDataFetcherService:
 
         self.setup_data.logger.info(f"Schedule data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
 
-        await asyncio.sleep(5*60)
+        await asyncio.sleep(2*60)
 
     def parse_to_db(self, info) -> None:
         for group_number, group in enumerate(("km31", "km32", "km33")):
