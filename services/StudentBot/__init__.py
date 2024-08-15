@@ -412,14 +412,14 @@ class ScheduleDB:
         
         schedule_info = ""
         for row in schedule:
-            start_time = row[0]
+            start_time = str(row[0])[:-3]
             subject = row[1]
             class_type = row[2]
             link = row[3]
-            schedule_info += f"{start_time}: {subject}, ({class_type}) [{link}]\n"
+            schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await self.stud_bot.send(user.id, f"Розклад на {day.lower()}:\n{schedule_info}")
+            await self.stud_bot.send(user.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
@@ -546,10 +546,11 @@ class MaterialDB:
             material_name = row[0]
             url = row[1]
 
-            material_info += f"[{material_name}]({url})\n\n"
+            material_info += f"[{material_name}]({url})\n{'='*50}\n"
 
         try:
             await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
+
         except Exception as e:
             print(f"Error sending material: {e}")
 
