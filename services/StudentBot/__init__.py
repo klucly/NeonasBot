@@ -243,7 +243,7 @@ class StudentDB:
     
     def get_students_of_group(self, group: str) -> list[str]:
         query = """
-        SELECT id FROM students
+        SELECT id, real_name FROM students
         WHERE "group" = %s
         """
 
@@ -252,10 +252,27 @@ class StudentDB:
 
         if students is None:
             return []
-        return [student[0] for student in students]
+        
+        return students
+    
+    def send_lst_of_students(self, group: str) -> str:
+        students = self.get_students_of_group(group)
+        output = ""
+        for student in students:
+            output += f"{student[1]}  [{student[0]}]\n\n"
+
+        return output
 
     def student_exist(self, id: int) -> bool:
         return bool(self.get_student(id))
+
+    def remove_student(self, id: int) -> None:
+        query = """
+        DELETE FROM students
+        WHERE id = %s
+        """
+
+        self.cursor.execute(query, (id,))
 
     def close(self):
         self.cursor.close()
@@ -805,7 +822,6 @@ class StudentBotService:
         user = await self.app.bot.get_chat_member(usr_id, usr_id)
         return user.user.name
 
-
 class Menu:
     @staticmethod
     async def group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -896,16 +912,30 @@ class Menu:
 
     @staticmethod
     async def admin_panel(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        user = service.student_db.get_student(update.effective_user.id)
         keyboard = [
             [InlineKeyboardButton("Повідомлення студентам", callback_data="send_message_for_students")],
-            [InlineKeyboardButton("Видалити студента", callback_data="delete_student")],
-            [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_student")],
+            [InlineKeyboardButton("Видалити студента", callback_data="delete_student_button")],
+            [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_students_button")],
             [InlineKeyboardButton("Назад", callback_data="restart")],
         ]
 
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         await service.send(update.effective_user.id, "Вітаю у меню для старост", reply_markup=reply_markup)
+ 
+    @staticmethod
+    async def delete_student_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        students = service.student_db.get_students_of_group(client.group)
+
+        keyboard = [
+        [InlineKeyboardButton(student_name, callback_data=f"delete_students('{student_id}')")]
+            for student_id, student_name in students
+        ]
+
+        keyboard.append([InlineKeyboardButton("Назад", callback_data="admin_panel")])
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await service.send(update.effective_user.id, "Оберіть людину для видалення", reply_markup=reply_markup)
 
     @staticmethod
     async def debts_admin_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1001,6 +1031,32 @@ class Button:
         client.group = group
         await query.answer()
         await Menu.schedule_menu(service, update, context)
+
+    @staticmethod 
+    async def delete_student_button(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        await Menu.delete_student_menu(service, update, context)
+
+    # TODO confirm menu
+    @staticmethod
+    async def delete_students(service: StudentBotService, update: telegram.Update, context: CallbackContext, id: str) -> None:
+        query = update.callback_query
+        await query.answer()
+        id = id.replace('"', '').replace("'", '')
+        await service.send_raw(id, "Вас було видаленно з бази даних.")
+        service.student_db.remove_student(id)
+        await service.send(update.effective_user.id, "Студента видалено з бази даних.")
+
+    @staticmethod
+    async def send_lst_of_students_button(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        client = service.student_db.get_student(query.from_user.id)
+        await query.answer()
+        students = service.student_db.send_lst_of_students(client.group)
+
+        await service.send(update.effective_user.id, students)
+
 
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
