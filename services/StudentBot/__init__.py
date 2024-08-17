@@ -423,6 +423,30 @@ class ScheduleDB:
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
+    async def send_group_schedule(self, update: telegram.Update, context: CallbackContext, day: str) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
+        week = self.get_week()
+
+        schedule = self.get_schedule(client.group, day, week)
+
+        if not schedule:
+            await self.stud_bot.send_group(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
+            return
+
+        schedule_info = ""
+        for row in schedule:
+            start_time = str(row[0])[:-3]
+            subject = row[1]
+            class_type = row[2]
+            link = row[3]
+            schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
+
+        try:
+            await self.stud_bot.send_group(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+        except Exception as e:
+            print(f"Error sending schedule: {e}")
+
     @staticmethod
     def unverified_need_to_choose_group(context: CallbackContext) -> bool:
         if "unverified_choose_group_for_schedule" not in context.chat_data:
@@ -433,6 +457,17 @@ class ScheduleDB:
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
+    def get_current_day(self):
+        days_of_week = {
+            1: 'Понеділок',
+            2: 'Вівторок',
+            3: 'Середа',
+            4: 'Четверг',
+            5: "П'ятниця",
+        }
+
+        current_day = datetime.datetime.now().weekday()
+        return days_of_week[current_day]
 
 @dataclass
 class Debt:
@@ -591,6 +626,7 @@ class StudentBotService:
         await self.app.bot.set_my_commands([
             telegram.BotCommand(command="/start", description="Start the bot"),
             telegram.BotCommand(command="/menu", description="Open the menu"),
+            telegram.BotCommand(command="/schedule", description="Send schedule for current day")
         ])
 
     def set_handlers(self) -> None:
@@ -598,6 +634,7 @@ class StudentBotService:
         self.app.add_handler(CommandHandler("menu", self.menu))
         self.app.add_handler(CommandHandler("admin", self.self_promote))
         self.app.add_handler(CommandHandler("forgetme", self.forget_me))
+        self.app.add_handler(CommandHandler("schedule", self.send_schedule_for_today))
         self.app.add_handler(CallbackQueryHandler(self.button_controller))
         self.app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.text_controller))
@@ -612,6 +649,10 @@ class StudentBotService:
         
         await delete_user_request_if_text(update)
         self.student_db.update_db()
+
+    async def send_schedule_for_today(self, update: telegram.Update, context: CallbackContext) -> None:
+        await self.schedule_db.send_group_schedule(update, context, self.schedule_db.get_current_day())
+
     
     async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
@@ -699,6 +740,10 @@ class StudentBotService:
         message = await self.app.bot.send_message(usr_id, text, **kwargs)
         client = self.student_db.get_student(usr_id)
         client.is_main_message_first = False
+        return message.id
+    
+    async def send_group(self, usr_id: int, text: str, **kwargs) -> int:
+        message = await self.app.bot.send_message(usr_id, text, **kwargs)
         return message.id
 
     async def _reset_and_send(self, usr_id: int, text: str, **kwargs) -> int:
