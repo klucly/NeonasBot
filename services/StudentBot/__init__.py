@@ -868,7 +868,9 @@ class Menu:
             [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Вівторок)")],
             [InlineKeyboardButton("Середа", callback_data="schedule_day(Середа)")],
             [InlineKeyboardButton("Четвер", callback_data="schedule_day(Четверг)")],
-            [InlineKeyboardButton("П'ятниця", callback_data="schedule_day(П'ятниця)")]
+            [InlineKeyboardButton("П'ятниця", callback_data="schedule_day(П'ятниця)")],
+            [InlineKeyboardButton("Назад", callback_data="restart")],
+
         ])
         await service.send(update.effective_user.id, "Введіть день:", reply_markup=reply_markup)
 
@@ -880,20 +882,37 @@ class Menu:
     async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         user = service.student_db.get_student(update.effective_user.id)
 
-        reply_markup = telegram.InlineKeyboardMarkup([
+        keyboard = [
             [InlineKeyboardButton("Розклад", callback_data="schedule")],
             [InlineKeyboardButton("Матеріали", callback_data="materials")],
             [InlineKeyboardButton("Борги", callback_data="debts")],
-            [InlineKeyboardButton("Налаштування", callback_data="options")],
-        ])
-        await service.send(user.id, f"Привіт, {user.real_name}", reply_markup=reply_markup)
+        ]
+
+        if user.is_admin:
+            keyboard.append([InlineKeyboardButton("Адмін-панель", callback_data="admin_panel")])
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await service.send(update.effective_user.id, "Вітаю у меню", reply_markup=reply_markup)
+
+    @staticmethod
+    async def admin_panel(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        user = service.student_db.get_student(update.effective_user.id)
+        keyboard = [
+            [InlineKeyboardButton("Повідомлення студентам", callback_data="send_message_for_students")],
+            [InlineKeyboardButton("Видалити студента", callback_data="delete_student")],
+            [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_student")],
+            [InlineKeyboardButton("Назад", callback_data="restart")],
+        ]
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await service.send(update.effective_user.id, "Вітаю у меню для старост", reply_markup=reply_markup)
 
     @staticmethod
     async def debts_admin_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Мої борги", callback_data="debts_list")],
             [InlineKeyboardButton("Додати борг", callback_data="add_debt")],
-            [InlineKeyboardButton("Повернутися в меню", callback_data="menu")],
+            [InlineKeyboardButton("Назад", callback_data="menu")],
         ])
 
         await service.send(update.effective_user.id, "Борги", reply_markup=reply_markup)
@@ -988,6 +1007,12 @@ class Button:
         query = update.callback_query
         await query.answer()
         await StudentBotService.start(service, update, context)
+
+    @staticmethod
+    async def admin_panel(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        await Menu.admin_panel(service, update, context)
 
     @staticmethod
     async def not_a_student(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
