@@ -6,6 +6,7 @@ from service_setup import SetupServiceData
 from services.ScheduleDataFetcher import ScheduleDataFetcherService
 from services.MaterialFetcher import MaterialsDataFetcherService
 from services.StudentBot import StudentBotService
+from services.SimpleListener import SimpleListener
 
 
 def setup_logger() -> logging.Logger:
@@ -49,12 +50,14 @@ class Main:
         schedule_data_fetcher = ScheduleDataFetcherService(self.setup_data)
         material_fetcher = MaterialsDataFetcherService(self.setup_data)
         student_bot_service = StudentBotService(self.setup_data)
+        simple_listener = SimpleListener(self.setup_data)
 
         self.logger.info("Boot: Running services")
         async with asyncio.TaskGroup() as tg:
             tg.create_task(schedule_data_fetcher.run())
             tg.create_task(material_fetcher.run())
             tg.create_task(student_bot_service.run())
+            tg.create_task(simple_listener.run())
 
 if __name__ == "__main__":
     main = Main()
