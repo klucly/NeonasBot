@@ -161,6 +161,19 @@ class Client:
     @property
     def is_admin(self) -> bool:
         return self._is_admin
+        
+    @is_admin.setter
+    def is_admin(self, is_admin: bool) -> None:
+        query = """
+        UPDATE students
+        SET is_admin = %s
+        WHERE id = %s;
+        """
+
+        self.student_db.cursor.execute(query, (is_admin, self.id))
+        self._is_admin = is_admin
+
+        self.student_db.update_db()
 
 
 class Admins:
@@ -178,20 +191,14 @@ class Admins:
 
         output = self.service.student_db.cursor.fetchone()
         if output is None:
-            return ()
+            return []
         return output
-    
-    def add_admin(self, user_id: int) -> None:
-        self.logger.info(f"StudentBotService: Added admin {user_id}")
-        self.service.student_db.cursor.execute("""
-            UPDATE students SET is_admin = true WHERE id = %s;
-        """, (user_id,))
-        self.service.student_db.update_db()
 
 
 class StudentDB:
-    def __init__(self):
+    def __init__(self, service):
         self.connection = psycopg2.connect(**load_student_db_config())
+        self.service = service
         self.cursor = self.connection.cursor()
 
     def add_student(self, id: int) -> Client:
@@ -206,16 +213,6 @@ class StudentDB:
         student = Client(id, student_db=self)
 
         return student
-
-    def update_student_verification(self, id: int, verified: bool) -> None:
-        query = """
-        UPDATE students 
-        SET verified = %s
-        WHERE id = %s
-        """
-
-        self.cursor.execute(query, (verified, id))
-        self.connection.commit()
 
     def get_student(self, id: int) -> Client | None:
         query = """
@@ -251,11 +248,12 @@ class StudentDB:
         students = self.cursor.fetchall()
 
         if students is None:
+            self.service.logger.warning("StudentBotService: No students found for group %s" % group)
             return []
         
         return students
     
-    def send_lst_of_students(self, group: str) -> str:
+    def parsed_students_list(self, group: str) -> str:
         students = self.get_students_of_group(group)
         output = ""
         for student in students:
@@ -388,11 +386,11 @@ class Verification:
 
 
 class ScheduleDB:
-    def __init__(self, stud_bot):
+    def __init__(self, service):
         self.connection = psycopg2.connect(**load_student_db_config())
         self.cursor = self.connection.cursor()
-        self.stud_bot = stud_bot
-        self.student_db = self.stud_bot.student_db
+        self.service = service
+        self.student_db = self.service.student_db
 
     def get_schedule(self, group_name: str, day: str, week: int) -> list:
         conn = psycopg2.connect(**load_schedule_db_config())
@@ -408,7 +406,7 @@ class ScheduleDB:
             cur.execute(query, (day, week))
             rows = cur.fetchall()
         except Exception as e:
-            print(f"Database error: {e}")
+            self.service.logger.exception(f"StudentBotService: Schedule db error | {e}")
             rows = []
         finally:
             cur.close()
@@ -416,15 +414,14 @@ class ScheduleDB:
 
         return rows
 
-    async def send_schedule(self, update: telegram.Update, user_id: int, context: CallbackContext, day: str) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
+    async def user_send_schedule(self, user_id: int, day: str) -> None:
+        client = self.student_db.get_student(user_id)
         week = self.get_week()
 
         schedule = self.get_schedule(client.group, day, week)
 
         if not schedule:
-            await self.stud_bot.send(user.id, f"Не знайдено розкладу на {day}.")
+            await self.service.send(user_id, f"Не знайдено розкладу на {day}.")
             return
         
         schedule_info = ""
@@ -436,19 +433,16 @@ class ScheduleDB:
             schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await self.stud_bot.send(user.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+            await self.service.send(user_id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
-    async def send_group_schedule(self, update: telegram.Update, context: CallbackContext, day: str) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
+    async def group_send_schedule(self, group: str, telegram_group_id: int, day: str) -> None:
         week = self.get_week()
-
-        schedule = self.get_schedule(client.group, day, week)
+        schedule = self.get_schedule(group, day, week)
 
         if not schedule:
-            await self.stud_bot.send_group(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
+            await self.service.send_group(telegram_group_id, f"Не знайдено розкладу на {day}.")
             return
 
         schedule_info = ""
@@ -460,7 +454,7 @@ class ScheduleDB:
             schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await self.stud_bot.send_group(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+            await self.service.send_group(telegram_group_id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
@@ -475,13 +469,13 @@ class ScheduleDB:
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
     def get_current_day(self):
-        days_of_week = {
-            1: 'Понеділок',
-            2: 'Вівторок',
-            3: 'Середа',
-            4: 'Четверг',
-            5: "П'ятниця",
-        }
+        days_of_week = [
+            'Понеділок',
+            'Вівторок',
+            'Середа',
+            'Четверг',
+            "П'ятниця",
+        ]
 
         current_day = datetime.datetime.now().weekday()
         return days_of_week[current_day]
@@ -583,14 +577,12 @@ class MaterialDB:
 
         return rows
     
-    async def send_material(self, update: telegram.Update, user_id: int, context: CallbackContext) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
-
+    async def send_material(self, user_id: int) -> None:
+        client = self.student_db.get_student(user_id)
         material = self.get_material(client.group)
 
         if not material:
-            self.stud_bot.send(user.id, f"Немає матеріалів для  {client.group}.")
+            self.stud_bot.send(user_id, f"Немає матеріалів для {client.group}.")
             return
 
         material_info = ""
@@ -601,7 +593,7 @@ class MaterialDB:
             material_info += f"[{material_name}]({url})\n{'='*50}\n"
 
         try:
-            await self.stud_bot.send(user.id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
+            await self.stud_bot.send(user_id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
 
         except Exception as e:
             print(f"Error sending material: {e}")
@@ -613,7 +605,7 @@ class StudentBotService:
 
         self.groups = "km31", "km32", "km33"
         self.admins = Admins(self)
-        self.student_db = StudentDB()
+        self.student_db = StudentDB(self)
         self.schedule_db = ScheduleDB(self)
         self.debts_db = DebtsDB(self)
         self.material_db = MaterialDB(self)
@@ -657,7 +649,7 @@ class StudentBotService:
             filters.TEXT & ~filters.COMMAND, self.text_controller))
         self.app.add_handler(MessageHandler(filters.ALL, self.user_input_deleter))
 
-    async def forget_me(self, update: telegram.Update, context: CallbackContext) -> None:
+    async def forget_me(self, update: telegram.Update, _context: CallbackContext) -> None:
         user = update.effective_user
         self.student_db.cursor.execute("""
             DELETE FROM students
@@ -667,17 +659,17 @@ class StudentBotService:
         await delete_user_request_if_text(update)
         self.student_db.update_db()
 
-    async def send_schedule_for_today(self, update: telegram.Update, context: CallbackContext) -> None:
-        await self.schedule_db.send_group_schedule(update, context, self.schedule_db.get_current_day())
+    async def send_schedule_for_today(self, update: telegram.Update, _context: CallbackContext) -> None:
+        client = self.student_db.get_student(update.effective_user.id)
+        await self.schedule_db.group_send_schedule(client.group, update.effective_chat.id, self.schedule_db.get_current_day())
 
-    
-    async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
+    async def user_input_deleter(self, update: telegram.Update, _context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
         return telegram.ext.ConversationHandler.END
 
-    async def self_promote(self, update: telegram.Update, context: CallbackContext) -> None:
+    async def self_promote(self, update: telegram.Update, _context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
-        self.admins.add_admin(update.effective_user.id)
+        self.student_db.get_student(update.effective_user.id).is_admin = True
 
     async def button_controller(self, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
@@ -690,7 +682,7 @@ class StudentBotService:
         if hasattr(Button, name):
             await getattr(Button, name)(self, update, context, *args)
         else:
-            self.logger.error(f"Button: {name} not found. User: {query.from_user.name} | {query.message.to_json()}")
+            self.logger.error(f"StudentBotService: Button: {name} not found. User: {query.from_user.name} | {query.message.to_json()}")
             await query.answer(text="Invalid option selected.")
 
     def parse_button_query(self, query: str) -> tuple[str, list[str]]:
@@ -718,7 +710,7 @@ class StudentBotService:
         if "run_input_on" not in context.chat_data:
             self.logger.error(f"StudentBotService: Error in text_controller. No effective functions have been specified | {update.effective_user.name} | {update.message.to_json()}")
             return telegram.ext.ConversationHandler.END
-        
+
         effective_function = eval(context.chat_data["run_input_on"])
 
         user = update.effective_user
@@ -733,7 +725,7 @@ class StudentBotService:
         await update.message.delete()
 
         await effective_function(self, update, context, user_input)
-        
+
         return telegram.ext.ConversationHandler.END
 
     async def send(self, usr_id: int, text: str, **kwargs) -> int:
@@ -977,7 +969,7 @@ class Menu:
                            reply_markup=reply_markup)
         
     @staticmethod
-    def _parse_debt_input(usr_input: str) -> Debt:
+    def _parse_debt_input(usr_input: str) -> tuple[str, str, str]:
         subject, other = usr_input.split(":")
         text, date = other.split("|")
         return subject.strip(), text.strip(), date.strip()
@@ -1040,12 +1032,12 @@ class Button:
 
     # TODO confirm menu
     @staticmethod
-    async def delete_students(service: StudentBotService, update: telegram.Update, context: CallbackContext, id: str) -> None:
+    async def delete_students(service: StudentBotService, update: telegram.Update, context: CallbackContext, id_: str) -> None:
         query = update.callback_query
         await query.answer()
-        id = id.replace('"', '').replace("'", '')
-        await service.send_raw(id, "Вас було видаленно з бази даних.")
-        service.student_db.remove_student(id)
+        id_ = id_.replace('"', '').replace("'", '')
+        await service.send_raw(id_, "Вас було видаленно з бази даних.")
+        service.student_db.remove_student(id_)
         await service.send(update.effective_user.id, "Студента видалено з бази даних.")
 
     @staticmethod
@@ -1053,7 +1045,7 @@ class Button:
         query = update.callback_query
         client = service.student_db.get_student(query.from_user.id)
         await query.answer()
-        students = service.student_db.send_lst_of_students(client.group)
+        students = service.student_db.parsed_students_list(client.group)
 
         await service.send(update.effective_user.id, students)
 
@@ -1087,7 +1079,7 @@ class Button:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        await service.schedule_db.send_schedule(update, user_id, context, day)
+        await service.schedule_db.user_send_schedule(user_id, day)
 
     @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1199,19 +1191,18 @@ class Button:
         query = update.callback_query
         user_id = query.from_user.id
 
-
         if client.is_admin:
             await Menu.admin_material_menu(service, update, context)
             return
         
-        await service.material_db.send_material(update, user_id, context)
+        await service.material_db.send_material(user_id)
 
     @staticmethod
     async def view_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        await service.material_db.send_material(update, user_id, context)
+        await service.material_db.send_material(user_id)
 
     @staticmethod
     async def send_link_material(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
