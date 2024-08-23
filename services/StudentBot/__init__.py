@@ -1,7 +1,7 @@
 from copy import copy
 import datetime
 from typing import Any
-from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_material_db_config, load_debts_db_config
+from service_setup import SetupServiceData, get_token, load_student_db_config, load_schedule_db_config, load_material_db_config, load_debts_db_config, GroupsDB
 from telegram.ext import ApplicationBuilder, CommandHandler
 import telegram
 import asyncio
@@ -480,6 +480,7 @@ class ScheduleDB:
         current_day = datetime.datetime.now().weekday()
         return days_of_week[current_day]
 
+
 @dataclass
 class Debt:
     subject: str
@@ -599,6 +600,7 @@ class MaterialDB:
             print(f"Error sending material: {e}")
 
 
+
 class StudentBotService:
     def __init__(self, setup_data: SetupServiceData) -> None:
         self.logger = setup_data.logger
@@ -609,8 +611,11 @@ class StudentBotService:
         self.schedule_db = ScheduleDB(self)
         self.debts_db = DebtsDB(self)
         self.material_db = MaterialDB(self)
+        self.groups_db = GroupsDB(self.logger)
         self.verification = Verification(self, self.student_db)
         self.app = ApplicationBuilder().token(get_token("StudentsBot")).build()
+
+        setup_data.shared["bot_service"] = self
     
     async def run(self) -> None:
         try:
@@ -787,22 +792,46 @@ class StudentBotService:
         await Menu.unverified_menu(self, update, context)
 
     async def start(self, update: telegram.Update, context: CallbackContext) -> None:
-        user = update.effective_user
+        if update.effective_chat.type == telegram.constants.ChatType.PRIVATE:
+            await self.start_in_private_chat(update, context)
+        elif update.effective_chat.type == telegram.constants.ChatType.GROUP:
+            await self.start_in_group(update, context)
+        else:
+            self.send_group(update.effective_chat.id, "Цей вид чату не підтримується")
 
-        if self.student_db.student_exist(user.id) and self.student_db.get_student(user.id).is_verified:
+    async def start_in_private_chat(self, update: telegram.Update, context: CallbackContext) -> None:
+        user = update.effective_user
+        
+        if (self.student_db.student_exist(user.id) and
+            self.student_db.get_student(user.id).is_verified):
+
             await self.menu(update, context)
             return
 
         self.logger.info(f"StudentBotService: Started with {user.name}")
-        
+
         await delete_user_request_if_text(update)
         await self.init_user(user.id)
 
-        if await update.effective_chat.get_member_count() > 2:
-            # TODO make it work in groups
-            await update.message.reply_text("Cannot be used in groups yet. Sorry!")
-        else:
-            await Menu.group_choice_menu(self, update, context)
+        await Menu.group_choice_menu(self, update, context)
+
+    async def start_in_group(self, update: telegram.Update, context: CallbackContext) -> None:
+        client = self.student_db.get_student(update.effective_user.id)
+        group_id = update.effective_chat.id
+        if client is None:
+            await self.send_group(group_id, "Ви маєте бути зареєстрованими для активації бота в групі")
+            return
+
+        if not client.is_admin:
+            await self.send_group(group_id, "Ви маєте бути адміністратором для активації бота в групі")
+            return
+        
+        if self.groups_db.group_exists(group_id):
+            await self.send_group(group_id, "Групу вже встановлено")
+            return
+        
+        self.groups_db.add_group(group_id, client.group)
+        await self.send_group(group_id, f"Групу встановлено для {client.group}")
 
     async def init_user(self, usr_id: int) -> None:
         if self.student_db.student_exist(usr_id):
@@ -813,6 +842,11 @@ class StudentBotService:
     async def get_name_by_id(self, usr_id: int) -> str:
         user = await self.app.bot.get_chat_member(usr_id, usr_id)
         return user.user.name
+
+    async def get_chat_name_by_id(self, group_id: int) -> str:
+        chat = await self.app.bot.get_chat(group_id)
+        return chat.title
+
 
 class Menu:
     @staticmethod
@@ -908,6 +942,7 @@ class Menu:
             [InlineKeyboardButton("Повідомлення студентам", callback_data="send_message_for_students")],
             [InlineKeyboardButton("Видалити студента", callback_data="delete_student_button")],
             [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_students_button")],
+            [InlineKeyboardButton("Чати", callback_data="chats_admin_view")],
             [InlineKeyboardButton("Назад", callback_data="restart")],
         ]
 
@@ -967,7 +1002,7 @@ class Menu:
         await service.send(update.effective_user.id,
                            f"Тема: {subject}\nТекст: {text}\nДата: {date}\nПравильно?",
                            reply_markup=reply_markup)
-        
+
     @staticmethod
     def _parse_debt_input(usr_input: str) -> tuple[str, str, str]:
         subject, other = usr_input.split(":")
@@ -1004,6 +1039,56 @@ class Menu:
             [InlineKeyboardButton("Назад", callback_data="restart")],
         ])
         await service.send(update.effective_user.id, "Оберіть опцію:", reply_markup=reply_markup)
+
+    @staticmethod
+    async def chats_admin_view_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        groups = list(service.groups_db.get_groups(client.group))
+
+        if len(groups) == 0:
+            back_reply_markup = telegram.InlineKeyboardMarkup([
+                [InlineKeyboardButton("Назад", callback_data="admin_panel")],
+            ])
+            await service.send(
+                client.id,
+                "Чатів не знайдено. Напишіть /start у чаті щоб прив'язати",
+                reply_markup=back_reply_markup)
+            return
+
+        reply_markup = telegram.InlineKeyboardMarkup(
+            [[InlineKeyboardButton(
+                await service.get_chat_name_by_id(group.id),
+                callback_data=f"choose_chat({group.id})")
+            ] for group in groups] +
+            [[InlineKeyboardButton("Назад", callback_data="admin_panel")]]
+        )
+
+        await service.send(client.id, "Оберіть чат:", reply_markup=reply_markup)
+
+    @staticmethod
+    async def chat_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, chat_id: str) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        group = service.groups_db.get_group(chat_id)
+        chat_name = await service.get_chat_name_by_id(chat_id)
+
+        morning_day_schedule_text = ("🗹" if group.morning_day_schedule else "☐") + " Надсилати розклад зранку"
+        morning_day_schedule_checkbox = InlineKeyboardButton(
+            morning_day_schedule_text,
+            callback_data=f"toggle_chat_option(morning_day_schedule,{group.id})")
+
+        a_few_days_reminder_text = ("🗹" if group.a_few_days_reminder else "☐") + " Нагадування про дедлайн"
+        a_few_days_reminder_checkbox = InlineKeyboardButton(
+            a_few_days_reminder_text,
+            callback_data=f"toggle_chat_option(a_few_days_reminder,{group.id})")
+
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [morning_day_schedule_checkbox],
+            [a_few_days_reminder_checkbox],
+            [InlineKeyboardButton("Відв'язати чат", callback_data=f"forget_chat({chat_id})")],
+            [InlineKeyboardButton("Назад", callback_data="chats_admin_view")],
+        ])
+        
+        await service.send(client.id, f"{chat_name}", reply_markup=reply_markup)
 
 
 class Button:
@@ -1048,7 +1133,6 @@ class Button:
         students = service.student_db.parsed_students_list(client.group)
 
         await service.send(update.effective_user.id, students)
-
 
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1211,3 +1295,39 @@ class Button:
         await query.answer()
         text = "[Таблиця з матеріалами](https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859)"
         await service.send(user_id, text, parse_mode="MARKDOWN")
+
+    @staticmethod
+    async def chats_admin_view(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        await Menu.chats_admin_view_menu(service, update, context)
+
+    @staticmethod
+    async def choose_chat(service: StudentBotService, update: telegram.Update, context: CallbackContext, group_id: int) -> None:
+        query = update.callback_query
+        await query.answer()
+        await Menu.chat_menu(service, update, context, group_id)
+
+    @staticmethod
+    async def toggle_chat_option(service: StudentBotService, update: telegram.Update, context: CallbackContext, option: str, group_id: int) -> None:
+        query = update.callback_query
+        await query.answer()
+
+        group = service.groups_db.get_group(group_id)
+        
+        if option == "morning_day_schedule":
+            group.morning_day_schedule = not group.morning_day_schedule
+        elif option == "a_few_days_reminder":
+            group.a_few_days_reminder = not group.a_few_days_reminder
+        else:
+            service.logger.error(f"StudentBotService: unknown option {option} in toggle_chat_option")
+        
+        await Menu.chat_menu(service, update, context, group_id)
+
+    @staticmethod
+    async def forget_chat(service: StudentBotService, update: telegram.Update, context: CallbackContext, group_id: int) -> None:
+        query = update.callback_query
+        await query.answer()
+
+        service.groups_db.delete_group(group_id)
+        await Menu.chats_admin_view_menu(service, update, context)
