@@ -254,7 +254,7 @@ class StudentDB:
             return []
         
         return students
-    
+
     def send_lst_of_students(self, group: str) -> str:
         students = self.get_students_of_group(group)
         output = ""
@@ -446,9 +446,15 @@ class ScheduleDB:
         week = self.get_week()
 
         schedule = self.get_schedule(client.group, day, week)
+        chat_type = update.effective_chat.type
+
+        if chat_type == telegram.constants.ChatType.PRIVATE:
+            send_command = self.stud_bot.send
+        else:
+            send_command = self.stud_bot.send_group
 
         if not schedule:
-            await self.stud_bot.send_group(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
+            await send_command(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
             return
 
         schedule_info = ""
@@ -460,7 +466,7 @@ class ScheduleDB:
             schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await self.stud_bot.send_group(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+            await send_command(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
@@ -485,6 +491,7 @@ class ScheduleDB:
 
         current_day = datetime.datetime.now().weekday()
         return days_of_week[current_day]
+
 
 @dataclass
 class Debt:
@@ -668,9 +675,9 @@ class StudentBotService:
         self.student_db.update_db()
 
     async def send_schedule_for_today(self, update: telegram.Update, context: CallbackContext) -> None:
+        await self.user_input_deleter(update, context)
         await self.schedule_db.send_group_schedule(update, context, self.schedule_db.get_current_day())
 
-    
     async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
         return telegram.ext.ConversationHandler.END
@@ -719,7 +726,7 @@ class StudentBotService:
             self.logger.error(f"StudentBotService: Error in text_controller. No effective functions have been specified | {update.effective_user.name} | {update.message.to_json()}")
             return telegram.ext.ConversationHandler.END
         
-        effective_function = eval(context.chat_data["run_input_on"])
+        effective_function = eval(context.chat_data["run_input_on"]) 
 
         user = update.effective_user
         client = self.student_db.get_student(user.id)
@@ -732,6 +739,8 @@ class StudentBotService:
         client.is_inputting = False
         await update.message.delete()
 
+
+        #if delete self, my tool will working
         await effective_function(self, update, context, user_input)
         
         return telegram.ext.ConversationHandler.END
@@ -821,6 +830,23 @@ class StudentBotService:
     async def get_name_by_id(self, usr_id: int) -> str:
         user = await self.app.bot.get_chat_member(usr_id, usr_id)
         return user.user.name
+
+    async def send_for_all_students(self, usr_id: int, group: str, text: str, **kwargs) -> None:
+        students = self.student_db.get_students_of_group(group)
+        for student in students:
+            if student[0] == usr_id:
+                await self.send(usr_id, 'Повідомлення було відправленно', **kwargs)
+                continue
+            await self.send_raw(student[0], text, **kwargs)
+
+    async def store_message(self, update: telegram.Update, context: CallbackContext, user_input: str) -> None:
+        context.chat_data["stored_message"] = user_input
+        client = self.student_db.get_student(update.effective_user.id)
+
+        await self.send_for_all_students(client.id, client.group, user_input)
+        await self.send(update.effective_user.id, "Повідомлення збережено!")
+
+        return user_input
 
 class Menu:
     @staticmethod
@@ -913,7 +939,7 @@ class Menu:
     @staticmethod
     async def admin_panel(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         keyboard = [
-            [InlineKeyboardButton("Повідомлення студентам", callback_data="send_message_for_students")],
+            [InlineKeyboardButton("Повідомлення студентам", callback_data="request_message_input")],  # Новая кнопка
             [InlineKeyboardButton("Видалити студента", callback_data="delete_student_button")],
             [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_students_button")],
             [InlineKeyboardButton("Назад", callback_data="restart")],
@@ -921,7 +947,15 @@ class Menu:
 
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         await service.send(update.effective_user.id, "Вітаю у меню для старост", reply_markup=reply_markup)
- 
+
+    @staticmethod
+    async def send_students_message_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = 'StudentBotService.store_message'
+
+        await service.send(update.effective_user.id, "Введіть повідомлення для відправки студентам:")
+
     @staticmethod
     async def delete_student_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         client = service.student_db.get_student(update.effective_user.id)
@@ -1057,7 +1091,6 @@ class Button:
 
         await service.send(update.effective_user.id, students)
 
-
     @staticmethod
     async def restart(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
@@ -1152,7 +1185,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu"
+        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu.__(self)"
 
         await service.send(update.effective_user.id, "Введіть <тема>: <текст> | <день>/<місяць>/<рік>")
 
@@ -1189,7 +1222,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
+        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu.__(self)"
 
         await service.send(update.effective_user.id, "Введіть номер:")
 
@@ -1220,3 +1253,10 @@ class Button:
         await query.answer()
         text = "[Таблиця з матеріалами](https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859)"
         await service.send(user_id, text, parse_mode="MARKDOWN")
+
+    @staticmethod
+    async def request_message_input(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+
+        await Menu.send_students_message_menu(service, update, context)
