@@ -321,14 +321,11 @@ class Verification:
         await self._send_client_verified_to_admins(client, verifier)
 
     async def _client_send_verified_message(self, client: Client) -> None:
-        reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Меню", callback_data="menu")],
-        ])
-        await self.service.send(
+        await self.service.send_raw(
             client.id,
-            "Вас було підтверджено!",
-            reply_markup=reply_markup
-        )
+            "Вас було підтверджено!")
+
+        await Menu.main_menu(self.service, None, None, user_id=client.id)
 
     async def _send_client_verified_to_admins(self, client: Client, verifier: Client) -> None:
         telegram_username = await self.service.get_name_by_id(client.id)
@@ -437,12 +434,21 @@ class ScheduleDB:
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
-    async def group_send_schedule(self, group: str, telegram_group_id: int, day: str) -> None:
+    async def send_group_schedule(self, update: telegram.Update, context: CallbackContext, day: str) -> None:
+        user = update.effective_user
+        client = self.student_db.get_student(user.id)
         week = self.get_week()
-        schedule = self.get_schedule(group, day, week)
+
+        schedule = self.get_schedule(client.group, day, week)
+        chat_type = update.effective_chat.type
+
+        if chat_type == telegram.constants.ChatType.PRIVATE:
+            send_command = self.stud_bot.send
+        else:
+            send_command = self.stud_bot.send_group
 
         if not schedule:
-            await self.service.send_group(telegram_group_id, f"Не знайдено розкладу на {day}.")
+            await send_command(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
             return
 
         schedule_info = ""
@@ -454,16 +460,9 @@ class ScheduleDB:
             schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await self.service.send_group(telegram_group_id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+            await send_command(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
-
-    @staticmethod
-    def unverified_need_to_choose_group(context: CallbackContext) -> bool:
-        if "unverified_choose_group_for_schedule" not in context.chat_data:
-            return True
-        
-        return context.chat_data["unverified_choose_group_for_schedule"]
 
     def get_week(self):
         return datetime.date.today().isocalendar()[1] % 2 + 1
@@ -664,11 +663,11 @@ class StudentBotService:
         await delete_user_request_if_text(update)
         self.student_db.update_db()
 
-    async def send_schedule_for_today(self, update: telegram.Update, _context: CallbackContext) -> None:
-        client = self.student_db.get_student(update.effective_user.id)
-        await self.schedule_db.group_send_schedule(client.group, update.effective_chat.id, self.schedule_db.get_current_day())
+    async def send_schedule_for_today(self, update: telegram.Update, context: CallbackContext) -> None:
+        await self.user_input_deleter(update, context)
+        await self.schedule_db.send_group_schedule(update, context, self.schedule_db.get_current_day())
 
-    async def user_input_deleter(self, update: telegram.Update, _context: CallbackContext) -> None:
+    async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
         return telegram.ext.ConversationHandler.END
 
@@ -716,7 +715,7 @@ class StudentBotService:
             self.logger.error(f"StudentBotService: Error in text_controller. No effective functions have been specified | {update.effective_user.name} | {update.message.to_json()}")
             return telegram.ext.ConversationHandler.END
 
-        effective_function = eval(context.chat_data["run_input_on"])
+        effective_function = eval(context.chat_data["run_input_on"]) 
 
         user = update.effective_user
         client = self.student_db.get_student(user.id)
@@ -729,6 +728,8 @@ class StudentBotService:
         client.is_inputting = False
         await update.message.delete()
 
+
+        #if delete self, my tool will working
         await effective_function(self, update, context, user_input)
 
         return telegram.ext.ConversationHandler.END
@@ -843,6 +844,23 @@ class StudentBotService:
         user = await self.app.bot.get_chat_member(usr_id, usr_id)
         return user.user.name
 
+    async def send_for_all_students(self, usr_id: int, group: str, text: str, **kwargs) -> None:
+        students = self.student_db.get_students_of_group(group)
+        for student in students:
+            if student[0] == usr_id:
+                await self.send(usr_id, 'Повідомлення було відправленно', **kwargs)
+                continue
+            await self.send_raw(student[0], text, **kwargs)
+
+    async def store_message(self, update: telegram.Update, context: CallbackContext, user_input: str) -> None:
+        context.chat_data["stored_message"] = user_input
+        client = self.student_db.get_student(update.effective_user.id)
+
+        await self.send_for_all_students(client.id, client.group, user_input)
+        await self.send(update.effective_user.id, "Повідомлення збережено!")
+
+        return user_input
+
     async def get_chat_name_by_id(self, group_id: int) -> str:
         chat = await self.app.bot.get_chat(group_id)
         return chat.title
@@ -852,21 +870,11 @@ class Menu:
     @staticmethod
     async def group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Km-31", callback_data="choose_group(km31)")],
-            [InlineKeyboardButton("Km-32", callback_data="choose_group(km32)")],
-            [InlineKeyboardButton("Km-33", callback_data="choose_group(km33)")],
-            [InlineKeyboardButton("Не студент", callback_data="not_a_student")],
+            [InlineKeyboardButton("KM-31", callback_data="choose_group(km31)")],
+            [InlineKeyboardButton("KM-32", callback_data="choose_group(km32)")],
+            [InlineKeyboardButton("KM-33", callback_data="choose_group(km33)")],
         ])
         await service.send(update.effective_user.id, "Виберіть свою групу:", reply_markup=reply_markup)
-
-    @staticmethod
-    async def schedule_group_choice_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Km-31", callback_data="schedule_choose_group(km31)")],
-            [InlineKeyboardButton("Km-32", callback_data="schedule_choose_group(km32)")],
-            [InlineKeyboardButton("Km-33", callback_data="schedule_choose_group(km33)")],
-        ])
-        await service.send(update.effective_user.id, "Виберіть групу:", reply_markup=reply_markup)
 
     @staticmethod
     async def enter_name_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -883,28 +891,11 @@ class Menu:
 
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Надіслати на перевірку", callback_data="confirm")],
-            [InlineKeyboardButton("Змінити дані", callback_data="restart")],
-            [InlineKeyboardButton("Не студент", callback_data="not_a_student")],
-        ])
+            [InlineKeyboardButton("Змінити дані", callback_data="restart")]])
         await service.send(client.id, f"Ви {client.real_name} з {client.group}. Правильно?", reply_markup=reply_markup)
 
     @staticmethod
-    async def unverified_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Розклад", callback_data="schedule")],
-            [InlineKeyboardButton("Реєстрація", callback_data="restart")],
-            [InlineKeyboardButton("Налаштування", callback_data="options")],
-        ])
-        await service.send(update.effective_user.id, "Ви не зареєстровані", reply_markup=reply_markup)
-
-    @staticmethod
     async def schedule_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        client = service.student_db.get_student(update.effective_user.id)
-        
-        if not client.is_verified and service.schedule_db.unverified_need_to_choose_group(context):
-            return await Menu.schedule_group_choice_menu(service, update, context)
-        context.chat_data["unverified_choose_group_for_schedule"] = True
-
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Понеділок", callback_data="schedule_day(Понеділок)")],
             [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Вівторок)")],
@@ -921,8 +912,11 @@ class Menu:
         await service.send(update.effective_user.id, "<Options>")
 
     @staticmethod
-    async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        user = service.student_db.get_student(update.effective_user.id)
+    async def main_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, user_id=None) -> None:
+        if user_id is not None:
+            client = service.student_db.get_student(user_id)
+        else:
+            client = service.student_db.get_student(update.effective_user.id)
 
         keyboard = [
             [InlineKeyboardButton("Розклад", callback_data="schedule")],
@@ -930,25 +924,34 @@ class Menu:
             [InlineKeyboardButton("Борги", callback_data="debts")],
         ]
 
-        if user.is_admin:
+        if client.is_admin:
             keyboard.append([InlineKeyboardButton("Адмін-панель", callback_data="admin_panel")])
 
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-        await service.send(update.effective_user.id, "Вітаю у меню", reply_markup=reply_markup)
+        await service.send(client.id, "Вітаю у меню", reply_markup=reply_markup)
 
     @staticmethod
     async def admin_panel(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         keyboard = [
-            [InlineKeyboardButton("Повідомлення студентам", callback_data="send_message_for_students")],
+            [InlineKeyboardButton("Повідомлення студентам", callback_data="request_message_input")],
             [InlineKeyboardButton("Видалити студента", callback_data="delete_student_button")],
             [InlineKeyboardButton("Список студентів", callback_data="send_lst_of_students_button")],
+            [InlineKeyboardButton("Посилання", callback_data="links_menu")],
             [InlineKeyboardButton("Чати", callback_data="chats_admin_view")],
             [InlineKeyboardButton("Назад", callback_data="restart")],
         ]
 
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         await service.send(update.effective_user.id, "Вітаю у меню для старост", reply_markup=reply_markup)
- 
+
+    @staticmethod
+    async def send_students_message_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        client = service.student_db.get_student(update.effective_user.id)
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = 'StudentBotService.store_message'
+
+        await service.send(update.effective_user.id, "Введіть повідомлення для відправки студентам:")
+
     @staticmethod
     async def delete_student_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         client = service.student_db.get_student(update.effective_user.id)
@@ -1100,15 +1103,6 @@ class Button:
         await query.answer()
         await Menu.enter_name_menu(service, update, context)
 
-    @staticmethod
-    async def schedule_choose_group(service: StudentBotService, update: telegram.Update, context: CallbackContext, group: str) -> None:
-        context.chat_data["unverified_choose_group_for_schedule"] = False
-        query = update.callback_query
-        client = service.student_db.get_student(query.from_user.id)
-        client.group = group
-        await query.answer()
-        await Menu.schedule_menu(service, update, context)
-
     @staticmethod 
     async def delete_student_button(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
@@ -1145,12 +1139,6 @@ class Button:
         query = update.callback_query
         await query.answer()
         await Menu.admin_panel(service, update, context)
-
-    @staticmethod
-    async def not_a_student(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
-        query = update.callback_query
-        await query.answer()
-        await Menu.unverified_menu(service, update, context)
 
     @staticmethod
     async def schedule(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1228,7 +1216,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu"
+        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu.__(self)"
 
         await service.send(update.effective_user.id, "Введіть <тема>: <текст> | <день>/<місяць>/<рік>")
 
@@ -1265,7 +1253,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
+        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu.__(self)"
 
         await service.send(update.effective_user.id, "Введіть номер:")
 
@@ -1295,6 +1283,22 @@ class Button:
         await query.answer()
         text = "[Таблиця з матеріалами](https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=47762859#gid=47762859)"
         await service.send(user_id, text, parse_mode="MARKDOWN")
+
+    @staticmethod
+    async def links_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        reply_markup = telegram.InlineKeyboardMarkup([
+            [InlineKeyboardButton("Матеріали (Посилання)", url="https://docs.google.com/spreadsheets/d/1bfFIgVgv-dDK0HOcMw1qr861vWI8IXJyTEzcDGYMDDc/edit?gid=0#gid=0")],
+            [InlineKeyboardButton("Розклад (Посилання)", url="https://docs.google.com/spreadsheets/d/1gsxm1onrT76UYZxuT7b-qyO-haWiWk7igKwvSB0LLbg/edit?gid=0#gid=0")],
+            [InlineKeyboardButton("Назад", callback_data="restart")],
+        ])
+        await service.send(update.effective_user.id, "Оберіть опцію:", reply_markup=reply_markup)
+
+    @staticmethod
+    async def request_message_input(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+
+        await Menu.send_students_message_menu(service, update, context)
 
     @staticmethod
     async def chats_admin_view(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
