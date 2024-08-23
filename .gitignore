@@ -1,6 +1,6 @@
 # Private information
 data/
-setup_env.*
+setup_env*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
