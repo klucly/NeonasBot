@@ -107,7 +107,7 @@ class Client:
     def is_inputting(self, is_inputting: bool) -> None:
         query = """
         UPDATE students
-        SET is_inputting_name = %s
+        SET is_inputting = %s
         WHERE id = %s;
         """
 
@@ -203,7 +203,7 @@ class StudentDB:
 
     def add_student(self, id: int) -> Client:
         query = """
-        INSERT INTO students (id, verified, real_name, "group", is_inputting_name, main_message, main_message_first, is_admin)
+        INSERT INTO students (id, verified, real_name, "group", is_inputting, main_message, main_message_first, is_admin)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
 
