@@ -1,3 +1,6 @@
 {
-    "python.terminal.activateEnvInCurrentTerminal": true
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "CodeGPT.apiKey": "CodeGPT Plus Beta",
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.autoImportCompletions": false
 }

@@ -443,9 +443,9 @@ class ScheduleDB:
         chat_type = update.effective_chat.type
 
         if chat_type == telegram.constants.ChatType.PRIVATE:
-            send_command = self.stud_bot.send
+            send_command = self.service.send
         else:
-            send_command = self.stud_bot.send_group
+            send_command = self.service.send_group
 
         if not schedule:
             await send_command(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
