@@ -799,7 +799,7 @@ class StudentBotService:
         elif update.effective_chat.type == telegram.constants.ChatType.GROUP:
             await self.start_in_group(update, context)
         else:
-            self.send_group(update.effective_chat.id, "Цей вид чату не підтримується")
+           await self.send_group(update.effective_chat.id, "Цей вид чату не підтримується")
 
     async def start_in_private_chat(self, update: telegram.Update, context: CallbackContext) -> None:
         user = update.effective_user
