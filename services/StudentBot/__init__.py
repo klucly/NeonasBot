@@ -922,7 +922,7 @@ class Menu:
         keyboard = [
             [InlineKeyboardButton("Розклад", callback_data="schedule")],
             [InlineKeyboardButton("Матеріали", callback_data="materials")],
-            [InlineKeyboardButton("Борги", callback_data="debts")],
+            [InlineKeyboardButton("Дедлайни", callback_data="debts")],
         ]
 
         if client.is_admin:
@@ -971,12 +971,12 @@ class Menu:
     @staticmethod
     async def debts_admin_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         reply_markup = telegram.InlineKeyboardMarkup([
-            [InlineKeyboardButton("Мої борги", callback_data="debts_list")],
-            [InlineKeyboardButton("Додати борг", callback_data="add_debt")],
+            [InlineKeyboardButton("Мої дедлайни", callback_data="debts_list")],
+            [InlineKeyboardButton("Додати Дедлайн", callback_data="add_debt")],
             [InlineKeyboardButton("Назад", callback_data="menu")],
         ])
 
-        await service.send(update.effective_user.id, "Борги", reply_markup=reply_markup)
+        await service.send(update.effective_user.id, "Дедлайни:", reply_markup=reply_markup)
 
     @staticmethod
     async def debts_list_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1235,7 +1235,7 @@ class Button:
         debt = Debt(subject, text, due_to_date)
 
         service.debts_db.add_debt(debt, client.group)
-        await Button.back_to_menu_with_message(service, update, context, "Борг додан")
+        await Button.back_to_menu_with_message(service, update, context, "Делайн додан")
 
     @staticmethod
     async def back_to_menu_with_message(service: StudentBotService, update: telegram.Update, context: CallbackContext, message: str) -> None:
