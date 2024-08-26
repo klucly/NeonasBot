@@ -443,9 +443,9 @@ class ScheduleDB:
         chat_type = update.effective_chat.type
 
         if chat_type == telegram.constants.ChatType.PRIVATE:
-            send_command = self.stud_bot.send
+            send_command = self.service.send
         else:
-            send_command = self.stud_bot.send_group
+            send_command = self.service.send_group
 
         if not schedule:
             await send_command(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
@@ -468,13 +468,14 @@ class ScheduleDB:
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
     def get_current_day(self):
-        days_of_week = [
-            'Понеділок',
-            'Вівторок',
-            'Середа',
-            'Четверг',
-            "П'ятниця",
-        ]
+        days_of_week = {
+
+            0: 'Понеділок',
+            1: 'Вівторок',
+            2: 'Середа',
+            3: 'Четвер',
+            4: "П'ятниця",
+        }
 
         current_day = datetime.datetime.now().weekday()
         return days_of_week[current_day]
@@ -867,7 +868,7 @@ class Menu:
             [InlineKeyboardButton("Понеділок", callback_data="schedule_day(Понеділок)")],
             [InlineKeyboardButton("Вівторок", callback_data="schedule_day(Вівторок)")],
             [InlineKeyboardButton("Середа", callback_data="schedule_day(Середа)")],
-            [InlineKeyboardButton("Четвер", callback_data="schedule_day(Четверг)")],
+            [InlineKeyboardButton("Четвер", callback_data="schedule_day(Четвер)")],
             [InlineKeyboardButton("П'ятниця", callback_data="schedule_day(П'ятниця)")],
             [InlineKeyboardButton("Назад", callback_data="restart")],
 
