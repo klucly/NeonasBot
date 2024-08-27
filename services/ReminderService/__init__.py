@@ -51,7 +51,7 @@ class ReminderService:
                 await self.send_morning_reminders(chat.id, groupname)
 
     async def send_morning_reminders(self, group_id: int, group_name: str) -> None:
-        await self.service.schedule_db.group_send_schedule(group_name, group_id, self.service.schedule_db.get_current_day())
+        await self.service.schedule_db.send_group_schedule(group_name, group_id, self.service.schedule_db.get_current_day())
 
     async def send_a_few_days_reminder_if_needed(self) -> None:
         ...
