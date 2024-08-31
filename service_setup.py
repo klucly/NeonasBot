@@ -60,9 +60,9 @@ def load_material_db_config(filename='./data/StudentBot/configs/materials_db_con
         return json.load(file)
 
 
-def load_groups_db_config(filename='./data/StudentBot/configs/load_groups_db_config.json') -> dict[str, str]:
+def load_groups_db_config(filename='./data/StudentBot/configs/groups_db_config.json') -> dict[str, str]:
     if "useenv" in os.environ and os.environ["useenv"] == "true":
-        return json.loads(os.environ["loadgroupsdbconfig"])
+        return json.loads(os.environ["groupsdbconfig"])
     
     with open(filename, 'r') as file:
         return json.load(file)

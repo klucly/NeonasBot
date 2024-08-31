@@ -411,44 +411,24 @@ class ScheduleDB:
 
         return rows
 
-    async def user_send_schedule(self, user_id: int, day: str) -> None:
+    async def send_group_schedule(self, group_name: str, group_id: int, day: str) -> None:
+        return await self._send_schedule(group_name, group_id, day, True)
+
+    async def send_user_schedule(self, user_id: int, day: str) -> None:
         client = self.student_db.get_student(user_id)
+        return await self._send_schedule(client.group, user_id, day, False)
+
+    async def _send_schedule(self, group_name: str, send_id: int, day: str, is_group: bool) -> None:
         week = self.get_week()
 
-        schedule = self.get_schedule(client.group, day, week)
-
-        if not schedule:
-            await self.service.send(user_id, f"Не знайдено розкладу на {day}.")
-            return
-        
-        schedule_info = ""
-        for row in schedule:
-            start_time = str(row[0])[:-3]
-            subject = row[1]
-            class_type = row[2]
-            link = row[3]
-            schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
-
-        try:
-            await self.service.send(user_id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
-        except Exception as e:
-            print(f"Error sending schedule: {e}")
-
-    async def send_group_schedule(self, update: telegram.Update, context: CallbackContext, day: str) -> None:
-        user = update.effective_user
-        client = self.student_db.get_student(user.id)
-        week = self.get_week()
-
-        schedule = self.get_schedule(client.group, day, week)
-        chat_type = update.effective_chat.type
-
-        if chat_type == telegram.constants.ChatType.PRIVATE:
-            send_command = self.service.send
-        else:
+        schedule = self.get_schedule(group_name, day, week)
+        if is_group:
             send_command = self.service.send_group
+        else:
+            send_command = self.service.send
 
         if not schedule:
-            await send_command(update.effective_chat.id, f"Не знайдено розкладу на {day}.")
+            await send_command(send_id, f"Не знайдено розкладу на {day}.")
             return
 
         schedule_info = ""
@@ -460,7 +440,7 @@ class ScheduleDB:
             schedule_info += f"{start_time} {subject} - [{class_type}]({link})\n\n"
 
         try:
-            await send_command(update.effective_chat.id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
+            await send_command(send_id, f"Розклад на {day.lower()}:\n\n{schedule_info}", parse_mode='MARKDOWN')
         except Exception as e:
             print(f"Error sending schedule: {e}")
 
@@ -468,14 +448,13 @@ class ScheduleDB:
         return datetime.date.today().isocalendar()[1] % 2 + 1
 
     def get_current_day(self):
-        days_of_week = {
-
-            0: 'Понеділок',
-            1: 'Вівторок',
-            2: 'Середа',
-            3: 'Четвер',
-            4: "П'ятниця",
-        }
+        days_of_week = [
+            "Понеділок",
+            "Вівторок",
+            "Середа",
+            "Четвер",
+            "П'ятниця",
+        ]
 
         current_day = datetime.datetime.now().weekday()
         return days_of_week[current_day]
@@ -666,7 +645,14 @@ class StudentBotService:
 
     async def send_schedule_for_today(self, update: telegram.Update, context: CallbackContext) -> None:
         await self.user_input_deleter(update, context)
-        await self.schedule_db.send_group_schedule(update, context, self.schedule_db.get_current_day())
+
+        if update.effective_chat.type == telegram.Chat.PRIVATE:
+            await self.schedule_db.send_user_schedule(
+                update.effective_user.id, self.schedule_db.get_current_day())
+        else:
+            client = self.student_db.get_student(update.effective_user.id)
+            await self.schedule_db.send_group_schedule(
+                client.group, update.effective_chat.id, self.schedule_db.get_current_day())
 
     async def user_input_deleter(self, update: telegram.Update, context: CallbackContext) -> None:
         await delete_user_request_if_text(update)
@@ -1152,7 +1138,7 @@ class Button:
         query = update.callback_query
         user_id = query.from_user.id
         await query.answer()
-        await service.schedule_db.user_send_schedule(user_id, day)
+        await service.schedule_db.send_user_schedule(user_id, day)
 
     @staticmethod
     async def options(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:

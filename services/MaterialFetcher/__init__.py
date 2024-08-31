@@ -97,10 +97,16 @@ class MaterialsDataFetcherService:
         self.db_cursor.execute("DELETE FROM materials_km3x")
         
         self.setup_data.logger.info("Materials data fetcher service: Fetching data")
-        info = await self.fetch_data()
-        self.setup_data.logger.info("Materials data fetcher service: Parsing data")
-        self.parse_to_db(info)
-        self.db_connection.commit()
+        try:
+            info = await self.fetch_data()
+            self.setup_data.logger.info("Materials data fetcher service: Parsing data")
+            self.parse_to_db(info)
+            self.db_connection.commit()
+
+        except Exception as e:
+            self.setup_data.logger.exception( "Schedule data fetcher service: "
+                                             f"Error found while parsing, resetting the credentials {e}")
+            self.setup_google_api_connection()
 
         self.setup_data.logger.info(f"Materials data fetcher service: Done in {perf_counter()-time_before_parsing:.2f}seconds")
 
