@@ -56,9 +56,9 @@ class MaterialsDataFetcherService:
         self.url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values:batchGet"
         self.params = {
             "ranges" : [
-                "KM31!B3:C15",
-                "KM32!B3:C15",
-                "KM33!B3:C15"
+                "KM31!B3:C60",
+                "KM32!B3:C60",
+                "KM33!B3:C60"
             ]
         }
         self.headers = {

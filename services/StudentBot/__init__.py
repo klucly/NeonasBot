@@ -591,7 +591,7 @@ class MaterialDB:
             material_name = row[0]
             url = row[1]
 
-            material_info += f"[{material_name}]({url})\n{'='*50}\n"
+            material_info += f"[{material_name}]({url})\n{'='*25}\n"
 
         try:
             await self.stud_bot.send(user_id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
@@ -973,7 +973,7 @@ class Menu:
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Мої дедлайни", callback_data="debts_list")],
             [InlineKeyboardButton("Додати Дедлайн", callback_data="add_debt")],
-            [InlineKeyboardButton("Назад", callback_data="menu")],
+            [InlineKeyboardButton("Назад", callback_data="menu")]
         ])
 
         await service.send(update.effective_user.id, "Дедлайни:", reply_markup=reply_markup)
