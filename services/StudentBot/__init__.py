@@ -570,7 +570,7 @@ class MaterialDB:
             material_name = row[0]
             url = row[1]
 
-            material_info += f"[{material_name}]({url})\n{'='*25}\n"
+            material_info += f"[{material_name}]({url})\n{'='*10}\n"
 
         try:
             await self.stud_bot.send(user_id, f"Матеріали для **{client.group}**:\n{material_info}", parse_mode="MARKDOWN")
