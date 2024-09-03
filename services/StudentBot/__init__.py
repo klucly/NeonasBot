@@ -478,7 +478,7 @@ class DebtsDB:
     def add_debt(self, debt: Debt, group: str):
         students = self.service.student_db.get_students_of_group(group)
 
-        for student_id in students:
+        for student_id, _ in students:
             new_debt = copy(debt)
             new_debt.user = student_id
 
