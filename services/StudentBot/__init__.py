@@ -715,8 +715,6 @@ class StudentBotService:
         client.is_inputting = False
         await update.message.delete()
 
-
-        #if delete self, my tool will working
         await effective_function(self, update, context, user_input)
 
         return telegram.ext.ConversationHandler.END
@@ -1198,7 +1196,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu.__(self)"
+        context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu"
 
         await service.send(update.effective_user.id, "Введіть <тема>: <текст> | <день>/<місяць>/<рік>")
 
@@ -1235,7 +1233,7 @@ class Button:
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
         client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu.__(self)"
+        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
 
         await service.send(update.effective_user.id, "Введіть номер:")
 
