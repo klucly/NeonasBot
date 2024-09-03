@@ -37,7 +37,7 @@ class ReminderService:
     async def send_morning_reminders_if_needed(self) -> None:
         self.logger.info("ReminderService: Checking for morning reminders")
 
-        if not (datetime.now().hour == 8 and datetime.now().minute < 30 and datetime.now().weekday() < 5):
+        if not (datetime.now().hour == 4 and datetime.now().minute < 30 and datetime.now().weekday() < 5):
             return
         
         self.logger.info("ReminderService: Sending morning reminders")

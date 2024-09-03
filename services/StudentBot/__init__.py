@@ -775,9 +775,6 @@ class StudentBotService:
         
         if client.is_verified:
             await Menu.main_menu(self, update, context)
-            return
-
-        await Menu.unverified_menu(self, update, context)
 
     async def start(self, update: telegram.Update, context: CallbackContext) -> None:
         if update.effective_chat.type == telegram.constants.ChatType.PRIVATE:
