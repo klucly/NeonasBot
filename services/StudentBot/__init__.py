@@ -1275,7 +1275,7 @@ class Button:
 
 
         text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
-        await service.send(update.effective_user.id, text + "\n\nВведіть номер дедлайну:")
+        await service.send(update.effective_user.id, text + "\n\nВведіть номер дедлайну:", parse_mode='MarkdownV2')
 
     @staticmethod
     async def delete_debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1286,7 +1286,7 @@ class Button:
         context.chat_data["run_input_on"] = "Menu.delete_debts_confirm_menu"
 
         text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
-        await service.send(update.effective_user.id, text + "\n\nВведіть номер для видалення:")
+        await service.send(update.effective_user.id, text + "\n\nВведіть номер для видалення:", parse_mode='MarkdownV2')
 
 
     @staticmethod
