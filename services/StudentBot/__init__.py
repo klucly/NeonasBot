@@ -1232,10 +1232,10 @@ class Button:
         query = update.callback_query
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
+        await service.send(update.effective_user.id, "Введіть <тема>: <текст> | <день>/<місяць>/<рік>")
+
         client.is_inputting = True
         context.chat_data["run_input_on"] = "Menu.confirm_new_debt_menu"
-
-        await service.send(update.effective_user.id, "Введіть <тема>: <текст> | <день>/<місяць>/<рік>")
 
     @staticmethod
     async def confirm_new_debt(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
@@ -1270,24 +1270,24 @@ class Button:
         query = update.callback_query
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
-        client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
-
 
         text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
         await service.send(update.effective_user.id, text + "\n\nВведіть номер дедлайну:", parse_mode='MarkdownV2')
+
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
 
     @staticmethod
     async def delete_debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
         query = update.callback_query
         await query.answer()
         client = service.student_db.get_student(query.from_user.id)
-        client.is_inputting = True
-        context.chat_data["run_input_on"] = "Menu.delete_debts_confirm_menu"
 
         text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
         await service.send(update.effective_user.id, text + "\n\nВведіть номер для видалення:", parse_mode='MarkdownV2')
 
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.delete_debts_confirm_menu"
 
     @staticmethod
     async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext):
