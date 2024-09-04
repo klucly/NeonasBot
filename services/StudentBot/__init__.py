@@ -240,8 +240,9 @@ class StudentDB:
     
     def get_students_of_group(self, group: str) -> list[str]:
         query = """
-        SELECT id, real_name FROM students
-        WHERE "group" = %s
+        SELECT "id", real_name from students
+            WHERE "group" = %s
+            AND real_name is NOT NULL
         """
 
         self.cursor.execute(query, (group, ))
@@ -525,6 +526,15 @@ class DebtsDB:
             SET done = true
             WHERE subject = %s AND text = %s AND due_to_date = %s AND "user" = %s
         """, (debt.subject, debt.text, debt.due_to_date, debt.user))
+
+        self.connection.commit()
+
+    def delete_debt(self, debt: Debt) -> None:
+        self.cursor.execute("""
+            DELETE FROM debts
+            WHERE subject = %s AND text = %s AND due_to_date = %s
+        """, (debt.subject, debt.text, debt.due_to_date))
+
         self.connection.commit()
 
 
@@ -577,7 +587,6 @@ class MaterialDB:
 
         except Exception as e:
             print(f"Error sending material: {e}")
-
 
 
 class StudentBotService:
@@ -952,6 +961,7 @@ class Menu:
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Мої дедлайни", callback_data="debts_list")],
             [InlineKeyboardButton("Додати Дедлайн", callback_data="add_debt")],
+            [InlineKeyboardButton("Видалити дедлайн", callback_data = "delete_debts")],
             [InlineKeyboardButton("Назад", callback_data="menu")]
         ])
 
@@ -965,10 +975,10 @@ class Menu:
 
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Позначити готовим", callback_data="debts_mark_as_done")],
-            [InlineKeyboardButton("Повернутися в меню", callback_data="menu")],
-        ])
+            [InlineKeyboardButton("Повернутися в меню", callback_data="menu")]])
 
         await service.send(update.effective_user.id, text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
 
     @staticmethod
     async def confirm_new_debt_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, usr_input: str) -> None:
@@ -1003,8 +1013,32 @@ class Menu:
             debt = debts[index - 1]
         except (ValueError, IndexError):
             return await Menu._incorrect_debt_index_menu(service, update.effective_user.id)
-
+        
         service.debts_db.mark_as_done(debt)
+        await Button.back_to_menu_with_message(service, update, context, "Гарна робота!")
+        
+    @staticmethod
+    async def delete_debts_confirm_menu(service: StudentBotService, update: telegram.Update, context: CallbackContext, usr_input: str) -> None:
+        debts = context.chat_data["debts"]
+        try:
+            index = int(usr_input)
+            if index < 1:
+                raise IndexError("Too low")
+            
+            debt = debts[index - 1]
+        except (ValueError, IndexError):
+            return await Menu._incorrect_debt_index_menu(service, update.effective_user.id)
+
+        service.debts_db.delete_debt(debt)
+        await Button.back_to_menu_with_message(service, update, context, "Дедлайн видален")
+
+    @staticmethod
+    async def delete_debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        debts = service.debts_db.get_debts(update.effective_user.id)
+        context.chat_data["debts"] = debts
+
+        await service.send(update.effective_user.id, "Введіть номер видалення:")
+        context.chat_data["run_input_on"] = "Menu.delete_debts_confirm_menu"
         await Menu.debts_list_menu(service, update, context)
 
     @staticmethod
@@ -1219,7 +1253,8 @@ class Button:
     @staticmethod
     async def back_to_menu_with_message(service: StudentBotService, update: telegram.Update, context: CallbackContext, message: str) -> None:
         query = update.callback_query
-        await query.answer()
+        if query:
+            await query.answer()
         
         reply_markup = telegram.InlineKeyboardMarkup([
             [InlineKeyboardButton("Повернутися в меню", callback_data="menu")]
@@ -1235,7 +1270,21 @@ class Button:
         client.is_inputting = True
         context.chat_data["run_input_on"] = "Menu.mark_as_done_confirm_menu"
 
-        await service.send(update.effective_user.id, "Введіть номер:")
+
+        text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
+        await service.send(update.effective_user.id, text + "\n\nВведіть номер дедлайну:")
+
+    @staticmethod
+    async def delete_debts(service: StudentBotService, update: telegram.Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        client = service.student_db.get_student(query.from_user.id)
+        client.is_inputting = True
+        context.chat_data["run_input_on"] = "Menu.delete_debts_confirm_menu"
+
+        text = service.debts_db.build_debts_message_text(service.debts_db.get_debts(client.id))
+        await service.send(update.effective_user.id, text + "\n\nВведіть номер для видалення:")
+
 
     @staticmethod
     async def materials(service: StudentBotService, update: telegram.Update, context: CallbackContext):
