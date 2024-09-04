@@ -733,6 +733,7 @@ class StudentBotService:
         
         client = self.student_db.get_student(usr_id)
         main_message_id = client.main_message
+        client.is_inputting = False
 
         if main_message_id is None or not client.is_main_message_first:
             client.is_main_message_first = True
@@ -749,6 +750,8 @@ class StudentBotService:
         message = await self.app.bot.send_message(usr_id, text, **kwargs)
         client = self.student_db.get_student(usr_id)
         client.is_main_message_first = False
+        client.is_inputting = False
+        
         return message.id
     
     async def send_group(self, usr_id: int, text: str, **kwargs) -> int:
