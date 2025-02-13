@@ -740,7 +740,7 @@ class StudentBotService:
             return await self._reset_and_send(usr_id, text, **kwargs)
 
         try:
-            message = await self.app.bot.edit_message_text(text, chat_id=usr_id, message_id=main_message_id, **kwargs)
+            message = await self.app.bot.edit_message_text(text, chat_id=usr_id, message_id=main_message_id, disable_web_page_preview=True, disable_notification=True, **kwargs)
             return message.id
         
         except telegram.error.BadRequest:
