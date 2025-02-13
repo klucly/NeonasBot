@@ -747,7 +747,7 @@ class StudentBotService:
             return await self._reset_and_send(usr_id, text, **kwargs)
 
     async def send_raw(self, usr_id: int, text: str, **kwargs) -> int:
-        message = await self.app.bot.send_message(usr_id, text, **kwargs)
+        message = await self.app.bot.send_message(usr_id, text, disable_web_page_preview=True, disable_notification=True, **kwargs)
         client = self.student_db.get_student(usr_id)
         client.is_main_message_first = False
         client.is_inputting = False
@@ -755,11 +755,11 @@ class StudentBotService:
         return message.id
     
     async def send_group(self, usr_id: int, text: str, **kwargs) -> int:
-        message = await self.app.bot.send_message(usr_id, text, **kwargs)
+        message = await self.app.bot.send_message(usr_id, text, disable_web_page_preview=True, disable_notification=True, **kwargs)
         return message.id
 
     async def _reset_and_send(self, usr_id: int, text: str, **kwargs) -> int:
-        new_message = await self.app.bot.send_message(usr_id, text, **kwargs)
+        new_message = await self.app.bot.send_message(usr_id, text, disable_web_page_preview=True, disable_notification=True, **kwargs)
 
         await self.clear_main_message(usr_id)
         client = self.student_db.get_student(usr_id)
